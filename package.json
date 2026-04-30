@@ -1,0 +1,13 @@
+{
+  "name": "route-qa-auto",
+  "version": "1.0.0",
+  "description": "Automated QA checker for Route integration on merchant storefronts",
+  "main": "route-qa.js",
+  "scripts": {
+    "qa": "node route-qa.js",
+    "install-browsers": "npx playwright install chromium"
+  },
+  "dependencies": {
+    "playwright": "^1.42.0"
+  }
+}

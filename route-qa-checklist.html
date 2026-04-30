@@ -1,0 +1,453 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Route QA Checklist</title>
+  <style>
+    :root {
+      --green: #00c851; --dark: #0f1117; --fail: #ff3b30; --warn: #ff9500;
+      --neutral: #8e8e93; --bg: #f2f2f7; --card: #ffffff; --border: #e2e2ea;
+      --text: #1c1c1e; --sub: #636366;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--text); }
+    header { background: var(--dark); color: #fff; }
+    .hdr-main { max-width: 980px; margin: 0 auto; padding: 26px 20px 20px; }
+    .hdr-top { display: flex; align-items: center; gap: 12px; margin-bottom: 18px; }
+    .logo { width: 40px; height: 40px; background: var(--green); border-radius: 10px; display: flex; align-items: center; justify-content: center; font-weight: 900; font-size: 20px; color: #fff; flex-shrink: 0; }
+    .hdr-titles h1 { font-size: 20px; font-weight: 800; }
+    .hdr-titles p { font-size: 12px; color: rgba(255,255,255,0.45); margin-top: 2px; }
+    .url-bar { display: flex; gap: 8px; flex-wrap: wrap; }
+    .url-bar input[type="url"] { flex: 1; min-width: 220px; background: rgba(255,255,255,0.09); border: 1px solid rgba(255,255,255,0.15); border-radius: 9px; padding: 10px 14px; color: #fff; font-size: 14px; outline: none; }
+    .url-bar input[type="url"]:focus { border-color: var(--green); }
+    .url-bar input[type="url"]::placeholder { color: rgba(255,255,255,0.3); }
+    #openLink { text-decoration: none; }
+    .btn { padding: 10px 16px; border-radius: 9px; font-size: 13px; font-weight: 700; cursor: pointer; border: none; white-space: nowrap; transition: opacity 0.15s; }
+    .btn:hover { opacity: 0.82; }
+    .btn-green { background: var(--green); color: #fff; }
+    .btn-ghost { background: transparent; border: 1px solid rgba(255,255,255,0.22); color: #fff; }
+    .btn-red { background: var(--fail); color: #fff; }
+    .btn-dark { background: #2c2c2e; color: #fff; }
+    .prog-bar { background: rgba(255,255,255,0.06); border-top: 1px solid rgba(255,255,255,0.06); padding: 12px 20px; }
+    .prog-inner { max-width: 980px; margin: 0 auto; }
+    .prog-stats { display: flex; gap: 20px; flex-wrap: wrap; margin-bottom: 7px; }
+    .pstat { font-size: 12px; color: rgba(255,255,255,0.55); }
+    .pstat strong { color: #fff; }
+    .pstat.gn strong { color: var(--green); }
+    .pstat.rd strong { color: var(--fail); }
+    .track { height: 5px; background: rgba(255,255,255,0.1); border-radius: 3px; overflow: hidden; }
+    .fill { height: 100%; background: var(--green); border-radius: 3px; transition: width 0.3s; }
+    main { max-width: 980px; margin: 0 auto; padding: 24px 20px 64px; }
+    .meta-card { background: var(--card); border-radius: 12px; border: 1px solid var(--border); padding: 14px 18px; display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 22px; }
+    .mf { flex: 1; min-width: 140px; }
+    .mf label { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.6px; color: var(--sub); display: block; margin-bottom: 4px; }
+    .mf input, .mf select { border: 1px solid var(--border); border-radius: 7px; padding: 8px 10px; font-size: 13px; width: 100%; outline: none; background: #fafafa; color: var(--text); font-family: inherit; }
+    .mf input:focus, .mf select:focus { border-color: var(--green); background: #fff; }
+    .sec { background: var(--card); border-radius: 14px; border: 1px solid var(--border); margin-bottom: 16px; overflow: hidden; }
+    .sec-hdr { padding: 14px 18px; display: flex; align-items: center; justify-content: space-between; gap: 10px; cursor: pointer; user-select: none; border-bottom: 1px solid var(--border); transition: background 0.12s; }
+    .sec-hdr:hover { background: #fafafe; }
+    .sec-left { display: flex; align-items: center; gap: 11px; flex: 1; min-width: 0; }
+    .sec-icon { width: 32px; height: 32px; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 16px; flex-shrink: 0; }
+    .sec-info h2 { font-size: 14px; font-weight: 700; }
+    .sec-info .note { font-size: 11px; color: var(--sub); margin-top: 1px; font-style: italic; }
+    .sec-badge { font-size: 11px; font-weight: 700; padding: 3px 9px; border-radius: 20px; background: var(--bg); color: var(--sub); flex-shrink: 0; white-space: nowrap; }
+    .sec-badge.done { background: #e5f9ed; color: var(--green); }
+    .sec-badge.partial { background: #fff4e0; color: var(--warn); }
+    .sec-badge.failing { background: #ffeaea; color: var(--fail); }
+    .chevron { color: var(--sub); font-size: 13px; transition: transform 0.2s; flex-shrink: 0; }
+    .sec.closed .chevron { transform: rotate(-90deg); }
+    .sec-body { padding: 2px 0; }
+    .sec.closed .sec-body { display: none; }
+    .ci { padding: 12px 18px; display: flex; align-items: flex-start; gap: 12px; border-bottom: 1px solid #f0f0f5; transition: background 0.1s; }
+    .ci:last-child { border-bottom: none; }
+    .ci:hover { background: #fafafe; }
+    .ci-btns { display: flex; gap: 5px; flex-shrink: 0; padding-top: 1px; }
+    .rb { width: 25px; height: 25px; border-radius: 7px; border: 1.5px solid var(--border); display: flex; align-items: center; justify-content: center; cursor: pointer; font-size: 11px; transition: all 0.13s; flex-shrink: 0; }
+    .rb:hover { transform: scale(1.12); border-color: #aaa; }
+    .rb.pass { background: var(--green); border-color: var(--green); color: #fff; font-size: 13px; }
+    .rb.fail { background: var(--fail); border-color: var(--fail); color: #fff; font-size: 13px; }
+    .rb.na { background: var(--neutral); border-color: var(--neutral); color: #fff; font-size: 9px; font-weight: 700; }
+    .ci-body { flex: 1; min-width: 0; }
+    .ci-label { font-size: 13px; font-weight: 500; line-height: 1.45; }
+    .ci-sub { font-size: 11px; color: var(--sub); margin-top: 3px; line-height: 1.5; background: #f8f8fc; border-radius: 6px; padding: 5px 8px; border-left: 2px solid #d0d0e0; }
+    .ci-steps { font-size: 11.5px; color: var(--sub); margin-top: 5px; padding-left: 16px; line-height: 1.7; }
+    .note-row { margin-top: 6px; }
+    .note-toggle { font-size: 11px; color: #3a6ff8; cursor: pointer; text-decoration: underline; text-decoration-style: dotted; }
+    .ci-note { display: none; margin-top: 5px; width: 100%; border: 1px solid var(--border); border-radius: 7px; padding: 7px 10px; font-size: 12px; font-family: inherit; color: var(--text); background: #fafafa; resize: vertical; min-height: 34px; outline: none; }
+    .ci-note.vis { display: block; }
+    /* URL field for "Route found" fails */
+    .url-found-row { display: none; margin-top: 6px; }
+    .url-found-row.vis { display: flex; gap: 6px; align-items: center; }
+    .url-found-row label { font-size: 11px; font-weight: 600; color: var(--fail); white-space: nowrap; }
+    .url-found-input { flex: 1; border: 1.5px solid var(--fail); border-radius: 7px; padding: 6px 10px; font-size: 12px; font-family: inherit; color: var(--text); background: #fff8f8; outline: none; }
+    .ci.passed .ci-label { color: #1a7a3e; }
+    .ci.failed .ci-label { color: var(--fail); }
+    .ci.na-row .ci-label { color: var(--neutral); text-decoration: line-through; }
+    .summary { background: var(--card); border-radius: 14px; border: 1px solid var(--border); padding: 22px; margin-top: 26px; }
+    .summary h2 { font-size: 16px; font-weight: 800; margin-bottom: 16px; }
+    .sum-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px; margin-bottom: 18px; }
+    .sc { border-radius: 10px; padding: 14px; text-align: center; }
+    .sc .n { font-size: 30px; font-weight: 800; }
+    .sc .l { font-size: 11px; font-weight: 700; margin-top: 2px; }
+    .sc.tot { background: #f2f2f7; color: var(--text); }
+    .sc.pas { background: #e5f9ed; color: var(--green); }
+    .sc.fai { background: #ffeaea; color: var(--fail); }
+    .sc.naa { background: #f2f2f7; color: var(--neutral); }
+    .fail-list h3 { font-size: 13px; font-weight: 700; color: var(--fail); margin-bottom: 8px; }
+    .fail-list li { font-size: 12px; padding: 6px 10px; border-radius: 7px; background: #fff0f0; margin-bottom: 5px; color: #c0392b; list-style: none; display: flex; gap: 7px; }
+    .fail-list li::before { content: "✗"; font-weight: 800; }
+    .act-row { display: flex; gap: 8px; flex-wrap: wrap; padding-top: 16px; margin-top: 16px; border-top: 1px solid var(--border); }
+    @media print {
+      header { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+      .btn, .note-toggle { display: none !important; }
+      .ci-note, .url-found-row { display: block !important; }
+      .url-found-row { display: flex !important; }
+      .sec.closed .sec-body { display: block !important; }
+    }
+  </style>
+</head>
+<body>
+<header>
+  <div class="hdr-main">
+    <div class="hdr-top">
+      <div class="logo">R</div>
+      <div class="hdr-titles">
+        <h1>Route Implementation QA Checklist</h1>
+        <p>Internal QA — verify Route is working correctly before going live</p>
+      </div>
+    </div>
+    <div class="url-bar">
+      <input type="url" id="siteUrl" placeholder="https://merchant-store.myshopify.com" oninput="syncLink()" />
+      <a id="openLink" class="btn btn-green" href="#" target="_blank" rel="noopener noreferrer">Open Site ↗</a>
+      <button class="btn btn-ghost" onclick="window.print()">🖨 Print</button>
+    </div>
+  </div>
+  <div class="prog-bar">
+    <div class="prog-inner">
+      <div class="prog-stats">
+        <span class="pstat">Total: <strong id="sTotal">0</strong></span>
+        <span class="pstat gn">Passed: <strong id="sPass">0</strong></span>
+        <span class="pstat rd">Failed: <strong id="sFail">0</strong></span>
+        <span class="pstat">N/A: <strong id="sNA">0</strong></span>
+        <span class="pstat">Remaining: <strong id="sRem">0</strong></span>
+      </div>
+      <div class="track"><div class="fill" id="pBar" style="width:0%"></div></div>
+    </div>
+  </div>
+</header>
+
+<main>
+  <div class="meta-card">
+    <div class="mf"><label>QA Analyst</label><input type="text" id="qaName" placeholder="Your name" /></div>
+    <div class="mf"><label>Merchant Name</label><input type="text" id="mName" placeholder="e.g. Patbo" /></div>
+    <div class="mf"><label>Platform</label>
+      <select id="platform"><option value="">Select…</option><option>Shopify</option><option>Shopify Plus</option><option>BigCommerce</option><option>WooCommerce</option><option>Other</option></select>
+    </div>
+    <div class="mf"><label>Date</label><input type="date" id="qaDate" /></div>
+    <div class="mf"><label>Ticket #</label><input type="text" id="ticket" placeholder="e.g. ROUTE-1234" /></div>
+    <div class="mf"><label>Cart Type</label>
+      <select id="cartType"><option value="">Select…</option><option>Cart Page only</option><option>Drawer Cart only</option><option>Both</option></select>
+    </div>
+  </div>
+
+  <div id="sections"></div>
+
+  <div class="summary">
+    <h2>📋 QA Summary</h2>
+    <div class="sum-grid">
+      <div class="sc tot"><div class="n" id="sumTot">0</div><div class="l">Total</div></div>
+      <div class="sc pas"><div class="n" id="sumPas">0</div><div class="l">Passed</div></div>
+      <div class="sc fai"><div class="n" id="sumFai">0</div><div class="l">Failed</div></div>
+      <div class="sc naa"><div class="n" id="sumNA">0</div><div class="l">N/A</div></div>
+    </div>
+    <div class="fail-list" id="failList"></div>
+    <div class="act-row">
+      <button class="btn btn-dark" onclick="copyReport()">📋 Copy Report</button>
+      <button class="btn btn-green" onclick="window.print()">🖨 Print / PDF</button>
+      <button class="btn btn-red" onclick="resetAll()">↺ Reset All</button>
+    </div>
+  </div>
+</main>
+
+<script>
+const DATA = [
+  {
+    id: "general", icon: "🧪", bg: "#eef7ff",
+    title: "General QA — All Carts",
+    note: "Run in incognito unless otherwise noted",
+    items: [
+      { id:"g0", label:"Preview the draft theme in a new incognito window", sub:"Open the draft theme preview URL in a fresh incognito/private window before beginning any testing." },
+      { id:"g1", label:"Desktop Happy Path — Add via product page → checkout", sub:"Add a product via the product page in desktop view, proceed to checkout with Route coverage." },
+      { id:"g2", label:"Mobile Happy Path — Add via product page → checkout", sub:"Add a product via the product page in MOBILE view, proceed to checkout with Route coverage." },
+      { id:"g3", label:"Single product → increase quantity to 3 → checkout with coverage", sub:"With only ONE product in the cart, increase qty to 3, then checkout. (Checks for "Updates[] issue")" },
+      { id:"g4", label:"Quick Add — check if it opens a different cart", sub:"Add via Quick Add (if applicable) and verify it opens the same cart as adding via the product page." },
+      { id:"g5", label:"Add multiples of a single product at once → checkout", sub:"Add qty 2+ of a single product in one action, then proceed to checkout." },
+      { id:"g6", label:"Add 2+ different product types → checkout", sub:"Add two or more distinct products to the cart, then checkout with Route coverage." },
+      { id:"g7", label:"Multi-product cart — increase one item qty 1→3 → checkout", sub:"With 2+ different products in cart, increase qty of one item from 1→3, then checkout. (Re: "Updates[] issue")" },
+      { id:"g8", label:"Change qty in cart to cross $100 threshold → checkout", sub:"Adjust item qty so cart total crosses $100 — confirm Route widget quote updates correctly before checkout." },
+      { id:"g9", label:"Add product when cart is already over $100 → checkout", sub:"Start with cart total above $100, add another product — confirm Route widget quote updates correctly." },
+      { id:"g10", label:"Checkout WITHOUT coverage — Route product removed on Checkout Page", sub:"Opt out of Route and proceed to checkout. Verify Route product is correctly removed from the cart on the Checkout Page." },
+      { id:"g11", label:"Check out with coverage → toggle off → toggle on on Checkout Page → back → checkout with coverage", sub:"Checkout with coverage. On Checkout Page toggle Route OFF then back ON. Click back. Checkout with coverage again." },
+      { id:"g12", label:"Check out with coverage → back → increase item qty (BFCache – Drawer Cart)", sub:"Check out with coverage, click back to cart, increase an item quantity. Especially important with Drawer Cart." },
+      { id:"g13", label:"BFCache full test (live site, non-incognito, DevTools closed)",
+        steps:["Open the LIVE SITE in a non-incognito window with DevTools closed","Add a product to the cart","Click Route's duplicated checkout button","On checkout page, click the ← back arrow in the toolbar","Wait 5 seconds — if Route product is removed, there is NO BFCache issue","Refresh the page — if Route product shows up then gets removed, you have a BFCache restore issue","Repeat for every cart type and after adding from collection pages, PDPs, product modals"] },
+      { id:"g14", label:"Info Button hover — no weird :hover styling in Value Prop Accordion", sub:"Hover over the Info Button inside the Value Prop Accordion. Confirm no unexpected :hover CSS." },
+      { id:"g15", label:"Checkout Button has correct :hover styling", sub:"Hover over the Route checkout button and confirm the hover state looks correct." },
+      { id:"g16", label:"PC EQ checkout button text wraps well at <300px (mobile)", sub:"Resize to under 300px width — confirm checkout button text wraps without overflow or truncation." },
+      { id:"g17", label:"Regular tab (non-incognito) — draft theme, checkout with coverage → back → increase qty (BFCache)", sub:"In a regular tab with draft theme, check out WITH coverage, click back, increase item qty. Look for BFCache issues." }
+    ]
+  },
+  {
+    id: "collections", icon: "🛍️", bg: "#f0fdf5",
+    title: "Collections & Recommended Products",
+    note: "Verify Route product is hidden from storefront — paste the URL if Route is found",
+    items: [
+      { id:"col1", label:"Route product NOT visible in /collections/all (sort: price low→high)",
+        sub:"Remove all items from cart, click Continue Shopping → /collections/all. Sort by Price low→high. Confirm Route product is NOT visible.",
+        urlField: true, urlLabel: "If Route IS visible — paste product URL:" },
+      { id:"col2", label:"Route product NOT recommended on product pages",
+        sub:"If product pages have recommendations, visit multiple PDPs and confirm Route is never recommended.",
+        urlField: true, urlLabel: "If Route IS recommended — paste product URL:" },
+      { id:"col3", label:"Cart recommendations — Route quote updates after adding recommended product", sub:"If carts show product recommendations, add a product from recommendations — confirm Route widget quote updates." },
+      { id:"col4", label:"Route product NOT recommended inside the cart (various product combinations)",
+        sub:"Try different product combinations in cart. Confirm Route is never shown as a recommended product.",
+        urlField: true, urlLabel: "If Route IS appearing as recommended — paste product URL:" }
+    ]
+  },
+  {
+    id: "drawer", icon: "↔️", bg: "#fdf4ff",
+    title: "Drawer Cart — Specific Testing",
+    note: "Only applicable if the merchant uses a Drawer / Slide-out Cart",
+    items: [
+      { id:"dr1", label:"Widget has 10px+ gap between CWC link and bottom of page", sub:"Open Drawer Cart — confirm at least 10px spacing below the 'Covered With Coverage' link." },
+      { id:"dr2", label:"Route modal from Drawer Cart NOT covered by a <dialog> element (desktop)", sub:"In desktop view, trigger Route info modal from Drawer Cart. Confirm it's not hidden behind a <dialog> or overlay." },
+      { id:"dr3", label:"Drawer Cart widget text wraps well from ~1200px down to ~250px", sub:"Resize from ~1200px to ~250px. Confirm all Route widget text is readable at every breakpoint." }
+    ]
+  },
+  {
+    id: "cartpage", icon: "🛒", bg: "#fff8f0",
+    title: "Cart Page — Specific Testing",
+    note: "Only applicable if the merchant uses a dedicated /cart page",
+    items: [
+      { id:"cp1", label:"Widget properly aligned (usually centered) at mobile-view widths", sub:"View /cart on a mobile viewport — confirm Route widget is centered/aligned, not left-hanging or clipped." },
+      { id:"cp2", label:"Cart Page widget text wraps well from ~1200px down to ~250px", sub:"Resize from ~1200px to ~250px. Confirm all Route widget text renders cleanly at all breakpoints." }
+    ]
+  },
+  {
+    id: "tnc", icon: "📋", bg: "#fffbeb",
+    title: "Terms & Conditions Checkbox",
+    note: "Only applicable if merchant has a T&C checkbox in the checkout flow",
+    items: [
+      { id:"tnc1", label:"Checkout with T&C NOT checked — behavior matches live site", sub:"Attempt checkout with T&C unchecked. Verify this matches live site behavior." },
+      { id:"tnc2", label:"Checkout WITHOUT coverage, T&C NOT checked — behavior matches live site", sub:"Attempt checkout without Route and with T&C unchecked. Verify behavior matches live site." },
+      { id:"tnc3", label:"Checkout with T&C checked — Route product IS added", sub:"Check T&C and attempt checkout. Verify behavior matches live site AND Route product is in cart." },
+      { id:"tnc4", label:"Checkout WITHOUT coverage, T&C checked — Route product IS removed", sub:"Check T&C and opt out of Route, then checkout. Verify Route product is removed." },
+      { id:"tnc5", label:"WITH coverage + T&C NOT checked → edit qty → check T&C → checkout WITH coverage", sub:"Start checkout with coverage, T&C unchecked. Edit qty. Select T&C. Checkout again WITH coverage — Route present." },
+      { id:"tnc6", label:"WITH coverage + T&C NOT checked → edit qty → check T&C → checkout WITHOUT coverage", sub:"Start checkout with coverage, T&C unchecked. Edit qty. Select T&C. Checkout WITHOUT coverage — Route removed." }
+    ]
+  },
+  {
+    id: "checkout", icon: "💳", bg: "#f0f4ff",
+    title: "Checkout Page — Shopify Plus Only",
+    note: "Only applicable for merchants on Shopify Plus with checkout extensibility",
+    items: [
+      { id:"ch1", label:"Route modal appears correctly when prompted on the Checkout Page", sub:"Trigger Route info modal from Checkout Page widget. Confirm it renders without layout or z-index issues." },
+      { id:"ch2", label:"Route product REMOVED when Checkout Page widget toggled OFF", sub:"On Checkout Page, toggle Route off. Confirm Route line item is removed and total updates." },
+      { id:"ch3", label:"Route product ADDED when Checkout Page widget toggled ON", sub:"On Checkout Page, toggle Route on. Confirm Route line item appears and total increases correctly." },
+      { id:"ch4", label:"Route coverage cost updates when line items are edited (3rd-party editor)", sub:"If merchant uses a 3rd-party cart editor on Checkout Page, make changes — confirm Route cost recalculates." }
+    ]
+  }
+];
+
+// ── State ──
+const state = {};
+
+function renderAll() {
+  const container = document.getElementById("sections");
+  container.innerHTML = "";
+  DATA.forEach(sec => {
+    const el = document.createElement("div");
+    el.className = "sec";
+    el.id = "sec-" + sec.id;
+    el.innerHTML = `
+      <div class="sec-hdr" onclick="toggleSec('${sec.id}')">
+        <div class="sec-left">
+          <div class="sec-icon" style="background:${sec.bg}">${sec.icon}</div>
+          <div class="sec-info"><h2>${sec.title}</h2>${sec.note ? `<div class="note">${sec.note}</div>` : ""}</div>
+        </div>
+        <span class="sec-badge" id="badge-${sec.id}">0/${sec.items.length}</span>
+        <span class="chevron">▾</span>
+      </div>
+      <div class="sec-body" id="body-${sec.id}">
+        ${sec.items.map(renderItem).join("")}
+      </div>
+    `;
+    container.appendChild(el);
+    sec.items.forEach(i => { state[i.id] = null; });
+  });
+}
+
+function renderItem(item) {
+  const subHtml = item.sub ? `<div class="ci-sub">${item.sub}</div>` : "";
+  const stepsHtml = item.steps
+    ? `<ol class="ci-steps">${item.steps.map(s => `<li>${s}</li>`).join("")}</ol>` : "";
+  // URL field shown only when the item is marked FAIL
+  const urlHtml = item.urlField ? `
+    <div class="url-found-row" id="urlrow-${item.id}">
+      <label>${item.urlLabel || "Route product URL:"}</label>
+      <input class="url-found-input" type="url" id="urlval-${item.id}" placeholder="https://…/products/route-…" />
+    </div>` : "";
+
+  return `
+    <div class="ci" id="ci-${item.id}">
+      <div class="ci-btns">
+        <div class="rb" id="p-${item.id}" title="Pass" onclick="setS('${item.id}','pass')">✓</div>
+        <div class="rb" id="f-${item.id}" title="Fail" onclick="setS('${item.id}','fail')">✗</div>
+        <div class="rb" id="n-${item.id}" title="N/A" onclick="setS('${item.id}','na')">N/A</div>
+      </div>
+      <div class="ci-body">
+        <div class="ci-label">${item.label}</div>
+        ${subHtml}${stepsHtml}${urlHtml}
+        <div class="note-row">
+          <span class="note-toggle" onclick="toggleNote('${item.id}')">+ add note</span>
+          <textarea class="ci-note" id="nt-${item.id}" placeholder="Notes…" rows="2"></textarea>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function setS(id, val) {
+  state[id] = state[id] === val ? null : val;
+  ["pass","fail","na"].forEach(s => {
+    document.getElementById({pass:"p",fail:"f",na:"n"}[s]+"-"+id).className = "rb" + (state[id]===s?" "+s:"");
+  });
+  const row = document.getElementById("ci-"+id);
+  row.className = "ci" + (state[id]==="pass"?" passed":state[id]==="fail"?" failed":state[id]==="na"?" na-row":"");
+
+  // Show URL field only on FAIL for items that have it
+  const urlRow = document.getElementById("urlrow-"+id);
+  if (urlRow) urlRow.classList.toggle("vis", state[id]==="fail");
+
+  updateBadge(secForItem(id));
+  updateProgress();
+}
+
+function secForItem(id) {
+  for (const s of DATA) if (s.items.find(i => i.id===id)) return s.id;
+}
+
+function updateBadge(sid) {
+  const sec = DATA.find(s => s.id===sid);
+  if (!sec) return;
+  const done = sec.items.filter(i => state[i.id]!==null).length;
+  const fail = sec.items.filter(i => state[i.id]==="fail").length;
+  const b = document.getElementById("badge-"+sid);
+  b.textContent = done+"/"+sec.items.length;
+  b.className = "sec-badge" + (fail>0?" failing":done===sec.items.length?" done":done>0?" partial":"");
+}
+
+function updateProgress() {
+  const all = DATA.flatMap(s => s.items);
+  const pass = all.filter(i => state[i.id]==="pass").length;
+  const fail = all.filter(i => state[i.id]==="fail").length;
+  const na   = all.filter(i => state[i.id]==="na").length;
+  const done = pass+fail+na;
+  const total = all.length;
+  document.getElementById("sTotal").textContent = total;
+  document.getElementById("sPass").textContent = pass;
+  document.getElementById("sFail").textContent = fail;
+  document.getElementById("sNA").textContent = na;
+  document.getElementById("sRem").textContent = total-done;
+  document.getElementById("pBar").style.width = (done/total*100).toFixed(1)+"%";
+  document.getElementById("sumTot").textContent = total;
+  document.getElementById("sumPas").textContent = pass;
+  document.getElementById("sumFai").textContent = fail;
+  document.getElementById("sumNA").textContent = na;
+  const fl = document.getElementById("failList");
+  const failed = all.filter(i => state[i.id]==="fail");
+  fl.innerHTML = failed.length
+    ? `<h3>Failed Checks (${failed.length})</h3><ul>${failed.map(i => {
+        const urlEl = document.getElementById("urlval-"+i.id);
+        const urlNote = urlEl && urlEl.value ? ` — URL: ${urlEl.value}` : "";
+        return `<li>${i.label}${urlNote}</li>`;
+      }).join("")}</ul>`
+    : (done>0&&fail===0 ? `<p style="color:var(--green);font-weight:700;font-size:14px">🎉 No failures!</p>` : "");
+}
+
+function toggleSec(id) { document.getElementById("sec-"+id).classList.toggle("closed"); }
+
+function toggleNote(id) {
+  const n = document.getElementById("nt-"+id);
+  const t = n.previousElementSibling;
+  const v = n.classList.toggle("vis");
+  t.textContent = v ? "− hide note" : "+ add note";
+  if (v) n.focus();
+}
+
+function syncLink() {
+  const u = document.getElementById("siteUrl").value.trim();
+  document.getElementById("openLink").href = u || "#";
+}
+
+function copyReport() {
+  const merchant = document.getElementById("mName").value || "(merchant)";
+  const url      = document.getElementById("siteUrl").value || "(no URL)";
+  const analyst  = document.getElementById("qaName").value || "(analyst)";
+  const date     = document.getElementById("qaDate").value || new Date().toLocaleDateString();
+  const platform = document.getElementById("platform").value || "(platform)";
+  const ticket   = document.getElementById("ticket").value || "—";
+  const cart     = document.getElementById("cartType").value || "(unknown)";
+
+  const all  = DATA.flatMap(s => s.items);
+  const pass = all.filter(i => state[i.id]==="pass").length;
+  const fail = all.filter(i => state[i.id]==="fail").length;
+  const na   = all.filter(i => state[i.id]==="na").length;
+  const rem  = all.length-pass-fail-na;
+
+  let r = `ROUTE QA REPORT\n${"═".repeat(52)}\n`;
+  r += `Merchant:   ${merchant}\nURL:        ${url}\nPlatform:   ${platform} | Cart: ${cart}\n`;
+  r += `Analyst:    ${analyst}\nDate:       ${date}\nTicket:     ${ticket}\n\n`;
+  r += `RESULTS: ✓ ${pass} passed  ✗ ${fail} failed  — ${na} N/A  ○ ${rem} not checked\n`;
+
+  DATA.forEach(sec => {
+    r += `\n${"─".repeat(52)}\n${sec.title.toUpperCase()}\n${"─".repeat(52)}\n`;
+    sec.items.forEach(item => {
+      const s = state[item.id];
+      const icon = s==="pass"?"[PASS]":s==="fail"?"[FAIL]":s==="na"?"[N/A ]":"[    ]";
+      const nt = document.getElementById("nt-"+item.id)?.value || "";
+      const foundUrl = document.getElementById("urlval-"+item.id)?.value || "";
+      r += `${icon}  ${item.label}\n`;
+      if (foundUrl) r += `        Route URL found: ${foundUrl}\n`;
+      if (nt) r += `        Note: ${nt}\n`;
+    });
+  });
+
+  navigator.clipboard.writeText(r)
+    .then(() => alert("Report copied to clipboard!"))
+    .catch(() => prompt("Copy the report:", r));
+}
+
+function resetAll() {
+  if (!confirm("Reset all checks and notes?")) return;
+  DATA.flatMap(s => s.items).forEach(item => {
+    state[item.id] = null;
+    ["p","f","n"].forEach(p => { const el = document.getElementById(p+"-"+item.id); if(el) el.className="rb"; });
+    const row = document.getElementById("ci-"+item.id); if(row) row.className="ci";
+    const nt  = document.getElementById("nt-"+item.id);  if(nt) { nt.value=""; nt.classList.remove("vis"); }
+    const tog = nt?.previousElementSibling;               if(tog) tog.textContent="+ add note";
+    const urlRow = document.getElementById("urlrow-"+item.id); if(urlRow) urlRow.classList.remove("vis");
+    const urlVal = document.getElementById("urlval-"+item.id); if(urlVal) urlVal.value="";
+  });
+  DATA.forEach(s => updateBadge(s.id));
+  updateProgress();
+}
+
+// Init
+renderAll();
+updateProgress();
+document.getElementById("qaDate").value = new Date().toISOString().split("T")[0];
+</script>
+</body>
+</html>

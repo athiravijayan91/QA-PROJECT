@@ -1,0 +1,1058 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Route QA — Test Case Document</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#f5f5f7;color:#1d1d1f;font-size:13px}
+
+/* ── Cover ── */
+.cover{background:linear-gradient(135deg,#1a1a2e 0%,#16213e 100%);color:#fff;padding:48px 56px;print-color-adjust:exact;-webkit-print-color-adjust:exact}
+.cover h1{font-size:28px;font-weight:700;margin-bottom:8px}
+.cover .sub{font-size:14px;opacity:0.6;margin-bottom:32px}
+.meta-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:20px;max-width:700px}
+.meta-item label{font-size:10px;text-transform:uppercase;letter-spacing:1px;opacity:0.5;display:block;margin-bottom:4px}
+.meta-item input{background:rgba(255,255,255,0.1);border:1px solid rgba(255,255,255,0.2);border-radius:6px;color:#fff;padding:7px 10px;font-size:13px;width:100%;outline:none}
+.meta-item input::placeholder{color:rgba(255,255,255,0.3)}
+
+/* ── Legend ── */
+.legend{background:#fff;border-bottom:1px solid #e2e2ea;padding:12px 56px;display:flex;align-items:center;gap:24px;font-size:12px}
+.legend span{display:flex;align-items:center;gap:6px}
+.dot{width:10px;height:10px;border-radius:50%;display:inline-block}
+.dot.pass{background:#34c759}.dot.fail{background:#ff3b30}.dot.na{background:#aeaeb2}.dot.skip{background:#ffcc00}
+
+/* ── Section header ── */
+.section-header{background:#1a1a2e;color:#fff;padding:14px 56px;font-size:13px;font-weight:700;letter-spacing:0.5px;margin-top:24px;print-color-adjust:exact;-webkit-print-color-adjust:exact}
+.section-header .tag{font-size:10px;font-weight:600;background:rgba(255,255,255,0.15);padding:2px 8px;border-radius:4px;margin-left:10px;letter-spacing:0.3px;vertical-align:middle}
+.subsection{background:#e8ecf4;color:#1a1a2e;padding:9px 56px;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:0.8px;border-bottom:2px solid #c8d0e0}
+.conditional-note{background:#fffbe6;border-left:3px solid #ffcc00;padding:8px 56px;font-size:11px;color:#7a5c00}
+
+/* ── Table ── */
+.table-wrap{padding:0 32px 8px;overflow-x:auto}
+table{width:100%;border-collapse:collapse;margin-top:0;background:#fff;border:1px solid #e2e2ea;border-radius:0}
+thead tr{background:#f5f5f7}
+th{padding:10px 12px;text-align:left;font-size:11px;font-weight:700;color:#636366;text-transform:uppercase;letter-spacing:0.5px;border-bottom:2px solid #e2e2ea;white-space:nowrap}
+td{padding:10px 12px;border-bottom:1px solid #f0f0f5;vertical-align:top;line-height:1.5}
+tr:last-child td{border-bottom:none}
+tr:hover td{background:#fafafa}
+
+/* ── Column widths ── */
+.col-id{width:90px;font-weight:700;color:#0071e3;white-space:nowrap}
+.col-scenario{width:38%}
+.col-steps{width:30%}
+.col-expected{width:18%}
+.col-result{width:80px}
+.col-status{width:90px}
+
+/* ── TC ID ── */
+.tc-id{font-family:'SF Mono',Monaco,monospace;font-size:12px;font-weight:700;color:#0071e3}
+
+/* ── Steps ── */
+ol.steps{padding-left:16px;margin:0}
+ol.steps li{margin-bottom:3px}
+ul.bullets{padding-left:14px;margin:0;list-style:disc}
+ul.bullets li{margin-bottom:3px}
+
+/* ── Status selector ── */
+.status-select{display:flex;gap:4px;flex-wrap:wrap}
+.status-btn{padding:3px 9px;border-radius:5px;border:1px solid #e2e2ea;font-size:11px;font-weight:600;cursor:pointer;background:#fff;color:#636366;transition:all 0.1s;white-space:nowrap}
+.status-btn:hover{border-color:#aaa}
+.status-btn.active.pass{background:#e8f8f0;border-color:#34c759;color:#1a7a4a}
+.status-btn.active.fail{background:#ffeaea;border-color:#ff3b30;color:#c0392b}
+.status-btn.active.na{background:#f5f5f7;border-color:#aeaeb2;color:#636366}
+
+/* ── Result field ── */
+.result-field{width:100%;min-height:48px;padding:5px 7px;border:1px solid #e2e2ea;border-radius:5px;font-size:11px;font-family:inherit;resize:vertical;color:#1d1d1f}
+.result-field:focus{outline:none;border-color:#0071e3}
+
+/* ── Conditional row ── */
+tr.conditional td{background:#fffdf0}
+tr.conditional .tc-id{color:#b07d00}
+
+/* ── Summary footer ── */
+.summary{max-width:900px;margin:24px auto;padding:0 32px 48px}
+.summary-card{background:#fff;border:1px solid #e2e2ea;border-radius:12px;padding:24px}
+.summary-card h2{font-size:15px;font-weight:700;margin-bottom:16px}
+.sum-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:20px}
+.sum-stat{text-align:center;padding:14px;border-radius:10px;border:1px solid #e2e2ea}
+.sum-stat .num{font-size:26px;font-weight:700}
+.sum-stat .lbl{font-size:11px;color:#636366;margin-top:3px}
+.sum-stat.pass{background:#e8f8f0;border-color:#34c759}.sum-stat.pass .num{color:#1a7a4a}
+.sum-stat.fail{background:#ffeaea;border-color:#ff3b30}.sum-stat.fail .num{color:#c0392b}
+.sum-stat.na{background:#f5f5f7;border-color:#aeaeb2}.sum-stat.na .num{color:#636366}
+.sum-stat.total{background:#e8f0fe;border-color:#0071e3}.sum-stat.total .num{color:#0071e3}
+.fail-items{margin-top:8px}
+.fail-item{font-size:12px;padding:5px 10px;border-left:3px solid #ff3b30;background:#ffeaea;border-radius:0 5px 5px 0;margin-bottom:3px;color:#c0392b}
+.btn-print{padding:10px 20px;background:#1d1d1f;color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;margin-right:8px}
+.btn-print:hover{background:#333}
+.sign-row{display:grid;grid-template-columns:1fr 1fr 1fr;gap:20px;margin-top:20px}
+.sign-box{border-top:1px solid #d1d1d6;padding-top:8px;font-size:11px;color:#636366}
+.sign-box strong{display:block;margin-bottom:16px;font-size:12px;color:#1d1d1f}
+
+/* ── Print ── */
+@media print{
+  .no-print,.status-select,.btn-print{display:none!important}
+  body{background:#fff;font-size:11px}
+  .cover{background:#1a1a2e!important}
+  .section-header{background:#1a1a2e!important}
+  .result-field{border:1px solid #ccc;min-height:36px}
+  table{font-size:11px}
+  .table-wrap{padding:0 24px 8px}
+  .section-header,.subsection{padding-left:24px}
+  tr{page-break-inside:avoid}
+}
+</style>
+</head>
+<body>
+
+<!-- ── Cover ── -->
+<div class="cover">
+  <h1>🛡️ Route Integration — QA Test Cases</h1>
+  <p class="sub">Cart Page Widget · Preferred Checkout</p>
+  <div class="meta-grid">
+    <div class="meta-item"><label>Merchant / Store</label><input type="text" id="meta-merchant" placeholder="e.g. Patbo"></div>
+    <div class="meta-item"><label>Site URL</label><input type="text" id="meta-url" placeholder="https://..."></div>
+    <div class="meta-item"><label>Tester</label><input type="text" id="meta-tester" placeholder="Your name" value="Athira"></div>
+    <div class="meta-item"><label>Date</label><input type="text" id="meta-date" readonly></div>
+    <div class="meta-item"><label>Lower tier rate</label><input type="text" id="meta-r1" placeholder="e.g. 1.95%  ($0–$100)"></div>
+    <div class="meta-item"><label>Upper tier rate</label><input type="text" id="meta-r2" placeholder="e.g. 2.5%  ($100–$5k)"></div>
+    <div class="meta-item"><label>Coverage limit</label><input type="text" id="meta-limit" placeholder="e.g. $5,000"></div>
+    <div class="meta-item"><label>Rate type</label><input type="text" id="meta-rtype" placeholder="Static / Dynamic"></div>
+  </div>
+</div>
+
+<!-- ── Legend ── -->
+<div class="legend no-print">
+  <strong>Status key:</strong>
+  <span><span class="dot pass"></span> Pass</span>
+  <span><span class="dot fail"></span> Fail</span>
+  <span><span class="dot na"></span> N/A</span>
+  <span><span class="dot skip"></span> Conditional — skip if not applicable</span>
+</div>
+
+<!-- ════════════════════════════════════════════════ -->
+<!-- SECTION 1: FUNCTIONAL TESTING                   -->
+<!-- ════════════════════════════════════════════════ -->
+<div class="section-header">FUNCTIONAL TESTING <span class="tag">CART PAGE · PREFERRED CHECKOUT WIDGET</span></div>
+<div class="subsection">1–3 · Core Checkout Flow</div>
+<div class="table-wrap">
+<table>
+  <thead><tr>
+    <th class="col-id">TC ID</th>
+    <th class="col-scenario">Test Scenario</th>
+    <th class="col-steps">Steps</th>
+    <th class="col-expected">Expected Result</th>
+    <th>Actual Result / Notes</th>
+    <th class="col-status">Status</th>
+  </tr></thead>
+  <tbody>
+
+  <tr>
+    <td class="col-id"><span class="tc-id">TC-01</span></td>
+    <td><strong>Route added via Checkout</strong></td>
+    <td><ol class="steps">
+      <li>Add a product to cart via the product page</li>
+      <li>Click the Checkout button</li>
+      <li>Review line items at checkout</li>
+    </ol></td>
+    <td>Exactly <strong>one</strong> Route product is added at checkout</td>
+    <td><textarea class="result-field" placeholder="Actual result…"></textarea></td>
+    <td><div class="status-select">
+      <button class="status-btn" onclick="setStatus(this,'pass')">✅ Pass</button>
+      <button class="status-btn" onclick="setStatus(this,'fail')">❌ Fail</button>
+      <button class="status-btn" onclick="setStatus(this,'na')">— N/A</button>
+    </div></td>
+  </tr>
+
+  <tr>
+    <td class="col-id"><span class="tc-id">TC-02</span></td>
+    <td><strong>Route removed via CWC</strong></td>
+    <td><ol class="steps">
+      <li>Add a product to cart via the product page</li>
+      <li>Click "Checkout Without Coverage"</li>
+      <li>Review line items at checkout</li>
+    </ol></td>
+    <td>No Route product is present at checkout</td>
+    <td><textarea class="result-field" placeholder="Actual result…"></textarea></td>
+    <td><div class="status-select">
+      <button class="status-btn" onclick="setStatus(this,'pass')">✅ Pass</button>
+      <button class="status-btn" onclick="setStatus(this,'fail')">❌ Fail</button>
+      <button class="status-btn" onclick="setStatus(this,'na')">— N/A</button>
+    </div></td>
+  </tr>
+
+  <tr>
+    <td class="col-id"><span class="tc-id">TC-03a</span></td>
+    <td><strong>Multi-product checkout — single product</strong></td>
+    <td><ol class="steps">
+      <li>Add one product to cart</li>
+      <li>Click the Checkout button</li>
+      <li>Review line items at checkout</li>
+    </ol></td>
+    <td>Exactly one Route product is present at checkout</td>
+    <td><textarea class="result-field" placeholder="Actual result…"></textarea></td>
+    <td><div class="status-select">
+      <button class="status-btn" onclick="setStatus(this,'pass')">✅ Pass</button>
+      <button class="status-btn" onclick="setStatus(this,'fail')">❌ Fail</button>
+      <button class="status-btn" onclick="setStatus(this,'na')">— N/A</button>
+    </div></td>
+  </tr>
+
+  <tr>
+    <td class="col-id"><span class="tc-id">TC-03b</span></td>
+    <td><strong>Multi-product checkout — multiple products</strong></td>
+    <td><ol class="steps">
+      <li>Add multiple different products to cart</li>
+      <li>Click the Checkout button</li>
+      <li>Review line items at checkout</li>
+    </ol></td>
+    <td>Exactly one Route product is present at checkout regardless of product count</td>
+    <td><textarea class="result-field" placeholder="Actual result…"></textarea></td>
+    <td><div class="status-select">
+      <button class="status-btn" onclick="setStatus(this,'pass')">✅ Pass</button>
+      <button class="status-btn" onclick="setStatus(this,'fail')">❌ Fail</button>
+      <button class="status-btn" onclick="setStatus(this,'na')">— N/A</button>
+    </div></td>
+  </tr>
+
+  </tbody>
+</table>
+</div>
+
+<div class="subsection">4–5 · Premium Calculation & Coverage Limit</div>
+<div class="table-wrap">
+<table>
+  <thead><tr>
+    <th class="col-id">TC ID</th><th class="col-scenario">Test Scenario</th><th class="col-steps">Steps</th><th class="col-expected">Expected Result</th><th>Actual Result / Notes</th><th class="col-status">Status</th>
+  </tr></thead>
+  <tbody>
+
+  <tr>
+    <td class="col-id"><span class="tc-id">TC-04a</span></td>
+    <td><strong>Premium calculation — lower tier</strong><br><small style="color:#636366">Rate: <span class="meta-r1-val">—</span> &nbsp;|&nbsp; Range: $0 – <span class="meta-t1max-val">$100</span></small></td>
+    <td><ol class="steps">
+      <li>Add items so cart subtotal falls within the lower tier range</li>
+      <li>Note the displayed Route premium</li>
+      <li>Calculate expected premium: subtotal × lower tier rate</li>
+      <li>Repeat for 3 different subtotals within this range</li>
+    </ol></td>
+    <td>Displayed premium matches calculated amount for all 3 subtotals</td>
+    <td><textarea class="result-field" placeholder="Subtotal 1: $__ → Expected: $__ Actual: $__&#10;Subtotal 2: $__ → Expected: $__ Actual: $__&#10;Subtotal 3: $__ → Expected: $__ Actual: $__"></textarea></td>
+    <td><div class="status-select">
+      <button class="status-btn" onclick="setStatus(this,'pass')">✅ Pass</button>
+      <button class="status-btn" onclick="setStatus(this,'fail')">❌ Fail</button>
+      <button class="status-btn" onclick="setStatus(this,'na')">— N/A</button>
+    </div></td>
+  </tr>
+
+  <tr>
+    <td class="col-id"><span class="tc-id">TC-04b</span></td>
+    <td><strong>Premium calculation — upper tier</strong><br><small style="color:#636366">Rate: <span class="meta-r2-val">—</span> &nbsp;|&nbsp; Range: <span class="meta-t1max-val">$100</span> – <span class="meta-limit-val">$5,000</span></small></td>
+    <td><ol class="steps">
+      <li>Add items so cart subtotal falls within the upper tier range</li>
+      <li>Note the displayed Route premium</li>
+      <li>Calculate expected premium: subtotal × upper tier rate</li>
+      <li>Repeat for 5 different subtotals within this range</li>
+    </ol></td>
+    <td>Displayed premium matches calculated amount for all 5 subtotals</td>
+    <td><textarea class="result-field" style="min-height:80px" placeholder="Subtotal 1: $__ → Expected: $__ Actual: $__&#10;Subtotal 2: $__ → Expected: $__ Actual: $__&#10;Subtotal 3: $__ → Expected: $__ Actual: $__&#10;Subtotal 4: $__ → Expected: $__ Actual: $__&#10;Subtotal 5: $__ → Expected: $__ Actual: $__"></textarea></td>
+    <td><div class="status-select">
+      <button class="status-btn" onclick="setStatus(this,'pass')">✅ Pass</button>
+      <button class="status-btn" onclick="setStatus(this,'fail')">❌ Fail</button>
+      <button class="status-btn" onclick="setStatus(this,'na')">— N/A</button>
+    </div></td>
+  </tr>
+
+  <tr>
+    <td class="col-id"><span class="tc-id">TC-05</span></td>
+    <td><strong>Widget disappears above coverage limit</strong><br><small style="color:#636366">Limit: <span class="meta-limit-val">$5,000</span></small></td>
+    <td><ol class="steps">
+      <li>Add items to cart until subtotal exceeds the coverage limit</li>
+      <li>Observe the Route widget</li>
+    </ol></td>
+    <td>Route widget disappears once subtotal exceeds the coverage limit</td>
+    <td><textarea class="result-field" placeholder="Actual result…"></textarea></td>
+    <td><div class="status-select">
+      <button class="status-btn" onclick="setStatus(this,'pass')">✅ Pass</button>
+      <button class="status-btn" onclick="setStatus(this,'fail')">❌ Fail</button>
+      <button class="status-btn" onclick="setStatus(this,'na')">— N/A</button>
+    </div></td>
+  </tr>
+
+  </tbody>
+</table>
+</div>
+
+<div class="subsection">6 · Quantity / Updates[] Checks</div>
+<div class="table-wrap">
+<table>
+  <thead><tr>
+    <th class="col-id">TC ID</th><th class="col-scenario">Test Scenario</th><th class="col-steps">Steps</th><th class="col-expected">Expected Result</th><th>Actual Result / Notes</th><th class="col-status">Status</th>
+  </tr></thead>
+  <tbody>
+
+  <tr>
+    <td class="col-id"><span class="tc-id">TC-06a</span></td>
+    <td><strong>Quantity increase — single product</strong></td>
+    <td><ol class="steps">
+      <li>Add one product to cart</li>
+      <li>Increase item quantity to 3</li>
+      <li>Click Checkout with coverage</li>
+      <li>Review line items at checkout</li>
+    </ol></td>
+    <td>Exactly one Route product at checkout — no duplicates</td>
+    <td><textarea class="result-field" placeholder="Actual result…"></textarea></td>
+    <td><div class="status-select">
+      <button class="status-btn" onclick="setStatus(this,'pass')">✅ Pass</button>
+      <button class="status-btn" onclick="setStatus(this,'fail')">❌ Fail</button>
+      <button class="status-btn" onclick="setStatus(this,'na')">— N/A</button>
+    </div></td>
+  </tr>
+
+  <tr>
+    <td class="col-id"><span class="tc-id">TC-06b</span></td>
+    <td><strong>Quantity increase — multiple products</strong></td>
+    <td><ol class="steps">
+      <li>Add multiple different products to cart</li>
+      <li>Increase quantity of one item from 1 to 3</li>
+      <li>Click Checkout with coverage</li>
+      <li>Review line items at checkout</li>
+    </ol></td>
+    <td>Exactly one Route product at checkout — no duplicates</td>
+    <td><textarea class="result-field" placeholder="Actual result…"></textarea></td>
+    <td><div class="status-select">
+      <button class="status-btn" onclick="setStatus(this,'pass')">✅ Pass</button>
+      <button class="status-btn" onclick="setStatus(this,'fail')">❌ Fail</button>
+      <button class="status-btn" onclick="setStatus(this,'na')">— N/A</button>
+    </div></td>
+  </tr>
+
+  </tbody>
+</table>
+</div>
+
+<div class="subsection">7 · BFCache</div>
+<div class="table-wrap">
+<table>
+  <thead><tr>
+    <th class="col-id">TC ID</th><th class="col-scenario">Test Scenario</th><th class="col-steps">Steps</th><th class="col-expected">Expected Result</th><th>Actual Result / Notes</th><th class="col-status">Status</th>
+  </tr></thead>
+  <tbody>
+
+  <tr>
+    <td class="col-id"><span class="tc-id">TC-07</span></td>
+    <td><strong>BFCache — Route item removed after back navigation</strong><br><small style="color:#636366">Test on all cart types: drawer, modal, quick cart, main cart. Also test after adding from collection pages, PDPs, and product modals.</small></td>
+    <td><ol class="steps">
+      <li>Clear cache. Open live site in non-incognito window</li>
+      <li>Add a product to cart</li>
+      <li>Click the Checkout button</li>
+      <li>On checkout page, click ← back arrow in browser toolbar</li>
+      <li>Wait 5 seconds — observe cart</li>
+      <li>Refresh the page — observe cart again</li>
+      <li>Repeat for each available cart type</li>
+    </ol></td>
+    <td>Route item is removed from cart within 5s of back navigation. On page refresh, Route item does not reappear.</td>
+    <td><textarea class="result-field" style="min-height:70px" placeholder="Drawer cart: &#10;Modal cart: &#10;Quick cart: &#10;Main cart (/cart): &#10;Collection page ATC: &#10;PDP ATC: "></textarea></td>
+    <td><div class="status-select">
+      <button class="status-btn" onclick="setStatus(this,'pass')">✅ Pass</button>
+      <button class="status-btn" onclick="setStatus(this,'fail')">❌ Fail</button>
+      <button class="status-btn" onclick="setStatus(this,'na')">— N/A</button>
+    </div></td>
+  </tr>
+
+  </tbody>
+</table>
+</div>
+
+<div class="subsection">8 · Terms & Conditions Validation</div>
+<div class="conditional-note">⚠️ Skip this section if the merchant does not have a T&C checkbox in the checkout flow</div>
+<div class="table-wrap">
+<table>
+  <thead><tr>
+    <th class="col-id">TC ID</th><th class="col-scenario">Test Scenario</th><th class="col-steps">Steps</th><th class="col-expected">Expected Result</th><th>Actual Result / Notes</th><th class="col-status">Status</th>
+  </tr></thead>
+  <tbody>
+
+  <tr class="conditional">
+    <td class="col-id"><span class="tc-id">TC-08a</span></td>
+    <td><strong>T&C unchecked — Checkout blocked with coverage</strong></td>
+    <td><ol class="steps">
+      <li>Add a product to cart</li>
+      <li>Leave T&C checkbox unchecked</li>
+      <li>Click the Checkout button</li>
+    </ol></td>
+    <td>Checkout is blocked. Route product is NOT added to cart. Behavior matches live site without Route.</td>
+    <td><textarea class="result-field" placeholder="Actual result…"></textarea></td>
+    <td><div class="status-select">
+      <button class="status-btn" onclick="setStatus(this,'pass')">✅ Pass</button>
+      <button class="status-btn" onclick="setStatus(this,'fail')">❌ Fail</button>
+      <button class="status-btn" onclick="setStatus(this,'na')">— N/A</button>
+    </div></td>
+  </tr>
+
+  <tr class="conditional">
+    <td class="col-id"><span class="tc-id">TC-08b</span></td>
+    <td><strong>T&C unchecked — CWC blocked</strong></td>
+    <td><ol class="steps">
+      <li>Add a product to cart</li>
+      <li>Leave T&C checkbox unchecked</li>
+      <li>Click "Checkout Without Coverage"</li>
+    </ol></td>
+    <td>Checkout is blocked. Route product is NOT in cart. Behavior matches live site without Route.</td>
+    <td><textarea class="result-field" placeholder="Actual result…"></textarea></td>
+    <td><div class="status-select">
+      <button class="status-btn" onclick="setStatus(this,'pass')">✅ Pass</button>
+      <button class="status-btn" onclick="setStatus(this,'fail')">❌ Fail</button>
+      <button class="status-btn" onclick="setStatus(this,'na')">— N/A</button>
+    </div></td>
+  </tr>
+
+  <tr class="conditional">
+    <td class="col-id"><span class="tc-id">TC-08c</span></td>
+    <td><strong>T&C checked — Checkout succeeds with coverage</strong></td>
+    <td><ol class="steps">
+      <li>Add a product to cart</li>
+      <li>Check the T&C checkbox</li>
+      <li>Click the Checkout button</li>
+    </ol></td>
+    <td>Checkout proceeds. Route product IS added at checkout.</td>
+    <td><textarea class="result-field" placeholder="Actual result…"></textarea></td>
+    <td><div class="status-select">
+      <button class="status-btn" onclick="setStatus(this,'pass')">✅ Pass</button>
+      <button class="status-btn" onclick="setStatus(this,'fail')">❌ Fail</button>
+      <button class="status-btn" onclick="setStatus(this,'na')">— N/A</button>
+    </div></td>
+  </tr>
+
+  <tr class="conditional">
+    <td class="col-id"><span class="tc-id">TC-08d</span></td>
+    <td><strong>T&C checked — CWC succeeds without coverage</strong></td>
+    <td><ol class="steps">
+      <li>Add a product to cart</li>
+      <li>Check the T&C checkbox</li>
+      <li>Click "Checkout Without Coverage"</li>
+    </ol></td>
+    <td>Checkout proceeds. Route product is REMOVED from cart.</td>
+    <td><textarea class="result-field" placeholder="Actual result…"></textarea></td>
+    <td><div class="status-select">
+      <button class="status-btn" onclick="setStatus(this,'pass')">✅ Pass</button>
+      <button class="status-btn" onclick="setStatus(this,'fail')">❌ Fail</button>
+      <button class="status-btn" onclick="setStatus(this,'na')">— N/A</button>
+    </div></td>
+  </tr>
+
+  <tr class="conditional">
+    <td class="col-id"><span class="tc-id">TC-08e</span></td>
+    <td><strong>Qty edit between blocked attempts — with coverage</strong></td>
+    <td><ol class="steps">
+      <li>Leave T&C unchecked → Click Checkout (blocked)</li>
+      <li>Edit an item quantity in the cart</li>
+      <li>Check the T&C checkbox</li>
+      <li>Click Checkout with coverage again</li>
+    </ol></td>
+    <td>Checkout proceeds. Route product IS added at checkout.</td>
+    <td><textarea class="result-field" placeholder="Actual result…"></textarea></td>
+    <td><div class="status-select">
+      <button class="status-btn" onclick="setStatus(this,'pass')">✅ Pass</button>
+      <button class="status-btn" onclick="setStatus(this,'fail')">❌ Fail</button>
+      <button class="status-btn" onclick="setStatus(this,'na')">— N/A</button>
+    </div></td>
+  </tr>
+
+  <tr class="conditional">
+    <td class="col-id"><span class="tc-id">TC-08f</span></td>
+    <td><strong>Qty edit between blocked attempts — without coverage</strong></td>
+    <td><ol class="steps">
+      <li>Leave T&C unchecked → Click Checkout (blocked)</li>
+      <li>Edit an item quantity in the cart</li>
+      <li>Check the T&C checkbox</li>
+      <li>Click "Checkout Without Coverage"</li>
+    </ol></td>
+    <td>Checkout proceeds. Route product is REMOVED from cart.</td>
+    <td><textarea class="result-field" placeholder="Actual result…"></textarea></td>
+    <td><div class="status-select">
+      <button class="status-btn" onclick="setStatus(this,'pass')">✅ Pass</button>
+      <button class="status-btn" onclick="setStatus(this,'fail')">❌ Fail</button>
+      <button class="status-btn" onclick="setStatus(this,'na')">— N/A</button>
+    </div></td>
+  </tr>
+
+  </tbody>
+</table>
+</div>
+
+<div class="subsection">9–13 · Edge Cases & Storefront Integrity</div>
+<div class="table-wrap">
+<table>
+  <thead><tr>
+    <th class="col-id">TC ID</th><th class="col-scenario">Test Scenario</th><th class="col-steps">Steps</th><th class="col-expected">Expected Result</th><th>Actual Result / Notes</th><th class="col-status">Status</th>
+  </tr></thead>
+  <tbody>
+
+  <tr>
+    <td class="col-id"><span class="tc-id">TC-09</span></td>
+    <td><strong>Digital-only cart — no Route widget</strong></td>
+    <td><ol class="steps">
+      <li>Add any digital item (e.g. gift card) to cart</li>
+      <li>Ensure no physical products are in the cart</li>
+      <li>Observe the cart widget</li>
+    </ol></td>
+    <td>Route widget does NOT appear for a digital-only cart</td>
+    <td><textarea class="result-field" placeholder="Actual result…"></textarea></td>
+    <td><div class="status-select">
+      <button class="status-btn" onclick="setStatus(this,'pass')">✅ Pass</button>
+      <button class="status-btn" onclick="setStatus(this,'fail')">❌ Fail</button>
+      <button class="status-btn" onclick="setStatus(this,'na')">— N/A</button>
+    </div></td>
+  </tr>
+
+  <tr>
+    <td class="col-id"><span class="tc-id">TC-10</span></td>
+    <td><strong>Physical + Digital cart — premium on physical subtotal only</strong></td>
+    <td><ol class="steps">
+      <li>Add one physical product and one digital item to cart</li>
+      <li>Note the physical product subtotal</li>
+      <li>Observe the Route premium displayed</li>
+    </ol></td>
+    <td>Route premium is calculated on the physical product subtotal only — not the full cart total</td>
+    <td><textarea class="result-field" placeholder="Physical subtotal: $__ | Expected premium: $__ | Actual premium: $__"></textarea></td>
+    <td><div class="status-select">
+      <button class="status-btn" onclick="setStatus(this,'pass')">✅ Pass</button>
+      <button class="status-btn" onclick="setStatus(this,'fail')">❌ Fail</button>
+      <button class="status-btn" onclick="setStatus(this,'na')">— N/A</button>
+    </div></td>
+  </tr>
+
+  <tr>
+    <td class="col-id"><span class="tc-id">TC-11</span></td>
+    <td><strong>Route product not visible on storefront</strong></td>
+    <td><ol class="steps">
+      <li>Navigate to /collections/all</li>
+      <li>Check product recommendation sections on PDPs</li>
+      <li>Check upsell suggestions at checkout</li>
+    </ol></td>
+    <td>Route product does NOT appear anywhere as a purchasable storefront product</td>
+    <td><textarea class="result-field" placeholder="Actual result…"></textarea></td>
+    <td><div class="status-select">
+      <button class="status-btn" onclick="setStatus(this,'pass')">✅ Pass</button>
+      <button class="status-btn" onclick="setStatus(this,'fail')">❌ Fail</button>
+      <button class="status-btn" onclick="setStatus(this,'na')">— N/A</button>
+    </div></td>
+  </tr>
+
+  <tr>
+    <td class="col-id"><span class="tc-id">TC-12</span></td>
+    <td><strong>Route product auto-removed from cart</strong></td>
+    <td><ol class="steps">
+      <li>Add Route to cart (opt in)</li>
+      <li>Opt out / navigate back / modify cart</li>
+      <li>Observe whether Route is removed</li>
+    </ol></td>
+    <td>Route product is automatically removed whenever it should not be present</td>
+    <td><textarea class="result-field" placeholder="Actual result…"></textarea></td>
+    <td><div class="status-select">
+      <button class="status-btn" onclick="setStatus(this,'pass')">✅ Pass</button>
+      <button class="status-btn" onclick="setStatus(this,'fail')">❌ Fail</button>
+      <button class="status-btn" onclick="setStatus(this,'na')">— N/A</button>
+    </div></td>
+  </tr>
+
+  </tbody>
+</table>
+</div>
+
+<div class="subsection">14–15 · Value Prop & Info Modal</div>
+<div class="table-wrap">
+<table>
+  <thead><tr>
+    <th class="col-id">TC ID</th><th class="col-scenario">Test Scenario</th><th class="col-steps">Steps</th><th class="col-expected">Expected Result</th><th>Actual Result / Notes</th><th class="col-status">Status</th>
+  </tr></thead>
+  <tbody>
+
+  <tr>
+    <td class="col-id"><span class="tc-id">TC-13a</span></td>
+    <td><strong>Value prop — wording & premium amount</strong></td>
+    <td><ol class="steps">
+      <li>Add a product to cart</li>
+      <li>Observe the Route widget wording</li>
+      <li>Calculate expected premium for current subtotal</li>
+    </ol></td>
+    <td>Widget reads <em>"Order protected for $[amount]"</em>. Amount matches expected premium for the cart subtotal.</td>
+    <td><textarea class="result-field" placeholder="Expected: $__ | Actual shown: $__"></textarea></td>
+    <td><div class="status-select">
+      <button class="status-btn" onclick="setStatus(this,'pass')">✅ Pass</button>
+      <button class="status-btn" onclick="setStatus(this,'fail')">❌ Fail</button>
+      <button class="status-btn" onclick="setStatus(this,'na')">— N/A</button>
+    </div></td>
+  </tr>
+
+  <tr>
+    <td class="col-id"><span class="tc-id">TC-13b</span></td>
+    <td><strong>Value prop — ⓘ hover tooltip</strong></td>
+    <td><ol class="steps">
+      <li>Hover mouse over the ⓘ icon on the widget</li>
+      <li>Observe tooltip content</li>
+    </ol></td>
+    <td>Tooltip appears with: <em>"See what's included"</em> text and a <em>"Learn more"</em> link</td>
+    <td><textarea class="result-field" placeholder="Actual result…"></textarea></td>
+    <td><div class="status-select">
+      <button class="status-btn" onclick="setStatus(this,'pass')">✅ Pass</button>
+      <button class="status-btn" onclick="setStatus(this,'fail')">❌ Fail</button>
+      <button class="status-btn" onclick="setStatus(this,'na')">— N/A</button>
+    </div></td>
+  </tr>
+
+  <tr>
+    <td class="col-id"><span class="tc-id">TC-13c</span></td>
+    <td><strong>Value prop — ⓘ expanded state</strong></td>
+    <td><ol class="steps">
+      <li>Click the ⓘ icon</li>
+      <li>Confirm all content in the expanded state</li>
+    </ol></td>
+    <td>Expanded state shows: <em>"BENEFITS:"</em> label · <em>"See Details"</em> link · ✔ Package Protection by Route · ✔ Damage, loss, theft coverage · ✔ Fast refund or replacement · Body text present · All text readable, nothing cut off</td>
+    <td><textarea class="result-field" placeholder="Actual result…"></textarea></td>
+    <td><div class="status-select">
+      <button class="status-btn" onclick="setStatus(this,'pass')">✅ Pass</button>
+      <button class="status-btn" onclick="setStatus(this,'fail')">❌ Fail</button>
+      <button class="status-btn" onclick="setStatus(this,'na')">— N/A</button>
+    </div></td>
+  </tr>
+
+  <tr>
+    <td class="col-id"><span class="tc-id">TC-13d</span></td>
+    <td><strong>Value prop — collapses correctly</strong></td>
+    <td><ol class="steps">
+      <li>Expand the value prop by clicking ⓘ</li>
+      <li>Click the ⓘ icon again</li>
+    </ol></td>
+    <td>Value prop collapses back to its default state</td>
+    <td><textarea class="result-field" placeholder="Actual result…"></textarea></td>
+    <td><div class="status-select">
+      <button class="status-btn" onclick="setStatus(this,'pass')">✅ Pass</button>
+      <button class="status-btn" onclick="setStatus(this,'fail')">❌ Fail</button>
+      <button class="status-btn" onclick="setStatus(this,'na')">— N/A</button>
+    </div></td>
+  </tr>
+
+  <tr>
+    <td class="col-id"><span class="tc-id">TC-14</span></td>
+    <td><strong>Route info modal — "See Details"</strong></td>
+    <td><ol class="steps">
+      <li>Expand value prop → Click <em>"See Details"</em></li>
+      <li>Verify all modal content</li>
+      <li>Click ✕ to close</li>
+    </ol></td>
+    <td>Modal opens with: Header <em>"Powered by 🛡️ Route"</em> + ✕ button · Title <em>"We've got you covered."</em> · Subtitle present · 3 bullets: Shipping Protection, Instant Issue Resolution, 24/7 Claim Support · Legal disclaimer at bottom · Footer links: File A Claim · User Privacy · Terms of Service · Modal closes on ✕</td>
+    <td><textarea class="result-field" placeholder="Actual result…"></textarea></td>
+    <td><div class="status-select">
+      <button class="status-btn" onclick="setStatus(this,'pass')">✅ Pass</button>
+      <button class="status-btn" onclick="setStatus(this,'fail')">❌ Fail</button>
+      <button class="status-btn" onclick="setStatus(this,'na')">— N/A</button>
+    </div></td>
+  </tr>
+
+  </tbody>
+</table>
+</div>
+
+<div class="subsection">16 · Collections & Recommended Products</div>
+<div class="table-wrap">
+<table>
+  <thead><tr>
+    <th class="col-id">TC ID</th><th class="col-scenario">Test Scenario</th><th class="col-steps">Steps</th><th class="col-expected">Expected Result</th><th>Actual Result / Notes</th><th class="col-status">Status</th>
+  </tr></thead>
+  <tbody>
+
+  <tr>
+    <td class="col-id"><span class="tc-id">TC-15a</span></td>
+    <td><strong>Route product not in /collections/all</strong></td>
+    <td><ol class="steps">
+      <li>Remove all items from cart</li>
+      <li>Click "Continue Shopping"</li>
+      <li>Navigate to /collections/all</li>
+      <li>Sort by <em>"Price, lowest to highest"</em></li>
+      <li>Scan all products on the page</li>
+    </ol></td>
+    <td>Route product does NOT appear anywhere on the collections page</td>
+    <td><textarea class="result-field" placeholder="Actual result…"></textarea></td>
+    <td><div class="status-select">
+      <button class="status-btn" onclick="setStatus(this,'pass')">✅ Pass</button>
+      <button class="status-btn" onclick="setStatus(this,'fail')">❌ Fail</button>
+      <button class="status-btn" onclick="setStatus(this,'na')">— N/A</button>
+    </div></td>
+  </tr>
+
+  <tr>
+    <td class="col-id"><span class="tc-id">TC-15b</span></td>
+    <td><strong>Route product not in PDP recommendations</strong></td>
+    <td><ol class="steps">
+      <li>Visit multiple product pages that have recommendations</li>
+      <li>Check <em>"You may also like"</em> / <em>"Related products"</em> sections</li>
+    </ol></td>
+    <td>Route product does NOT appear as a recommended product on any PDP</td>
+    <td><textarea class="result-field" placeholder="Actual result…"></textarea></td>
+    <td><div class="status-select">
+      <button class="status-btn" onclick="setStatus(this,'pass')">✅ Pass</button>
+      <button class="status-btn" onclick="setStatus(this,'fail')">❌ Fail</button>
+      <button class="status-btn" onclick="setStatus(this,'na')">— N/A</button>
+    </div></td>
+  </tr>
+
+  <tr class="conditional">
+    <td class="col-id"><span class="tc-id">TC-15c</span></td>
+    <td><strong>Premium updates after adding from cart recommendations</strong><br><small style="color:#636366">Skip if cart has no recommendations section</small></td>
+    <td><ol class="steps">
+      <li>Add a product via the cart recommendations section</li>
+      <li>Observe the Route premium</li>
+    </ol></td>
+    <td>Route premium updates correctly to reflect the new cart subtotal</td>
+    <td><textarea class="result-field" placeholder="Actual result…"></textarea></td>
+    <td><div class="status-select">
+      <button class="status-btn" onclick="setStatus(this,'pass')">✅ Pass</button>
+      <button class="status-btn" onclick="setStatus(this,'fail')">❌ Fail</button>
+      <button class="status-btn" onclick="setStatus(this,'na')">— N/A</button>
+    </div></td>
+  </tr>
+
+  <tr class="conditional">
+    <td class="col-id"><span class="tc-id">TC-15d</span></td>
+    <td><strong>Route not recommended inside cart</strong><br><small style="color:#636366">Skip if cart has no recommendations section</small></td>
+    <td><ol class="steps">
+      <li>Add various product combinations to cart</li>
+      <li>Check cart recommendations section</li>
+    </ol></td>
+    <td>Route product NEVER appears as a recommended item inside the cart</td>
+    <td><textarea class="result-field" placeholder="Actual result…"></textarea></td>
+    <td><div class="status-select">
+      <button class="status-btn" onclick="setStatus(this,'pass')">✅ Pass</button>
+      <button class="status-btn" onclick="setStatus(this,'fail')">❌ Fail</button>
+      <button class="status-btn" onclick="setStatus(this,'na')">— N/A</button>
+    </div></td>
+  </tr>
+
+  </tbody>
+</table>
+</div>
+
+<div class="subsection">17–18 · Checkout Widget Harmony & Shopify Plus</div>
+<div class="conditional-note">⚠️ TC-16a–16c: Skip if no checkout widget is present &nbsp;|&nbsp; TC-17a–17d: Skip if merchant is not on Shopify Plus</div>
+<div class="table-wrap">
+<table>
+  <thead><tr>
+    <th class="col-id">TC ID</th><th class="col-scenario">Test Scenario</th><th class="col-steps">Steps</th><th class="col-expected">Expected Result</th><th>Actual Result / Notes</th><th class="col-status">Status</th>
+  </tr></thead>
+  <tbody>
+
+  <tr class="conditional">
+    <td class="col-id"><span class="tc-id">TC-16a</span></td>
+    <td><strong>Checkout widget ON with coverage</strong></td>
+    <td><ol class="steps">
+      <li>Add a product to cart</li>
+      <li>Click the Checkout button</li>
+      <li>Observe checkout widget state</li>
+    </ol></td>
+    <td>Route checkout widget is toggled ON at checkout</td>
+    <td><textarea class="result-field" placeholder="Actual result…"></textarea></td>
+    <td><div class="status-select">
+      <button class="status-btn" onclick="setStatus(this,'pass')">✅ Pass</button>
+      <button class="status-btn" onclick="setStatus(this,'fail')">❌ Fail</button>
+      <button class="status-btn" onclick="setStatus(this,'na')">— N/A</button>
+    </div></td>
+  </tr>
+
+  <tr class="conditional">
+    <td class="col-id"><span class="tc-id">TC-16b</span></td>
+    <td><strong>Checkout widget OFF without coverage</strong></td>
+    <td><ol class="steps">
+      <li>Add a product to cart</li>
+      <li>Click "Checkout Without Coverage"</li>
+      <li>Observe checkout widget state</li>
+    </ol></td>
+    <td>Route checkout widget is toggled OFF at checkout</td>
+    <td><textarea class="result-field" placeholder="Actual result…"></textarea></td>
+    <td><div class="status-select">
+      <button class="status-btn" onclick="setStatus(this,'pass')">✅ Pass</button>
+      <button class="status-btn" onclick="setStatus(this,'fail')">❌ Fail</button>
+      <button class="status-btn" onclick="setStatus(this,'na')">— N/A</button>
+    </div></td>
+  </tr>
+
+  <tr class="conditional">
+    <td class="col-id"><span class="tc-id">TC-16c</span></td>
+    <td><strong>Back navigation resets checkout widget state</strong></td>
+    <td><ol class="steps">
+      <li>Add product → Checkout with coverage</li>
+      <li>At checkout: toggle Route OFF then back ON</li>
+      <li>Click browser Back button</li>
+      <li>Click Checkout with coverage again</li>
+      <li>Observe checkout widget state</li>
+    </ol></td>
+    <td>Checkout widget is toggled OFF (state correctly reset)</td>
+    <td><textarea class="result-field" placeholder="Actual result…"></textarea></td>
+    <td><div class="status-select">
+      <button class="status-btn" onclick="setStatus(this,'pass')">✅ Pass</button>
+      <button class="status-btn" onclick="setStatus(this,'fail')">❌ Fail</button>
+      <button class="status-btn" onclick="setStatus(this,'na')">— N/A</button>
+    </div></td>
+  </tr>
+
+  <tr class="conditional">
+    <td class="col-id"><span class="tc-id">TC-17a</span></td>
+    <td><strong>Shopify Plus — Route modal renders at checkout</strong></td>
+    <td><ol class="steps">
+      <li>Add a product and proceed to checkout</li>
+      <li>Observe the Route modal/widget on the checkout page</li>
+    </ol></td>
+    <td>Route modal/widget renders correctly — not broken, hidden, or misaligned</td>
+    <td><textarea class="result-field" placeholder="Actual result…"></textarea></td>
+    <td><div class="status-select">
+      <button class="status-btn" onclick="setStatus(this,'pass')">✅ Pass</button>
+      <button class="status-btn" onclick="setStatus(this,'fail')">❌ Fail</button>
+      <button class="status-btn" onclick="setStatus(this,'na')">— N/A</button>
+    </div></td>
+  </tr>
+
+  <tr class="conditional">
+    <td class="col-id"><span class="tc-id">TC-17b</span></td>
+    <td><strong>Shopify Plus — toggling OFF removes Route</strong></td>
+    <td><ol class="steps">
+      <li>Proceed to checkout</li>
+      <li>Toggle the Route checkout widget OFF</li>
+      <li>Review order line items</li>
+    </ol></td>
+    <td>Route product is removed from the order</td>
+    <td><textarea class="result-field" placeholder="Actual result…"></textarea></td>
+    <td><div class="status-select">
+      <button class="status-btn" onclick="setStatus(this,'pass')">✅ Pass</button>
+      <button class="status-btn" onclick="setStatus(this,'fail')">❌ Fail</button>
+      <button class="status-btn" onclick="setStatus(this,'na')">— N/A</button>
+    </div></td>
+  </tr>
+
+  <tr class="conditional">
+    <td class="col-id"><span class="tc-id">TC-17c</span></td>
+    <td><strong>Shopify Plus — toggling ON adds Route</strong></td>
+    <td><ol class="steps">
+      <li>Proceed to checkout with widget OFF</li>
+      <li>Toggle the Route checkout widget ON</li>
+      <li>Review order line items</li>
+    </ol></td>
+    <td>Route product is added back to the order</td>
+    <td><textarea class="result-field" placeholder="Actual result…"></textarea></td>
+    <td><div class="status-select">
+      <button class="status-btn" onclick="setStatus(this,'pass')">✅ Pass</button>
+      <button class="status-btn" onclick="setStatus(this,'fail')">❌ Fail</button>
+      <button class="status-btn" onclick="setStatus(this,'na')">— N/A</button>
+    </div></td>
+  </tr>
+
+  <tr class="conditional">
+    <td class="col-id"><span class="tc-id">TC-17d</span></td>
+    <td><strong>Shopify Plus — premium updates on line item edit</strong><br><small style="color:#636366">Skip if no 3rd-party line item editor at checkout</small></td>
+    <td><ol class="steps">
+      <li>Proceed to checkout</li>
+      <li>Edit an item quantity using the line item editor</li>
+      <li>Observe Route premium</li>
+    </ol></td>
+    <td>Route premium updates correctly to reflect the new subtotal</td>
+    <td><textarea class="result-field" placeholder="Actual result…"></textarea></td>
+    <td><div class="status-select">
+      <button class="status-btn" onclick="setStatus(this,'pass')">✅ Pass</button>
+      <button class="status-btn" onclick="setStatus(this,'fail')">❌ Fail</button>
+      <button class="status-btn" onclick="setStatus(this,'na')">— N/A</button>
+    </div></td>
+  </tr>
+
+  </tbody>
+</table>
+</div>
+
+<!-- ════════════════════════════════════════════════ -->
+<!-- SECTION 2: NON-FUNCTIONAL / DESIGN TESTING      -->
+<!-- ════════════════════════════════════════════════ -->
+<div class="section-header">NON-FUNCTIONAL TESTING <span class="tag">DESIGN · LAYOUT · RESPONSIVENESS</span></div>
+<div class="subsection">Cart Page — Design Checks</div>
+<div class="table-wrap">
+<table>
+  <thead><tr>
+    <th class="col-id">TC ID</th><th class="col-scenario">Test Scenario</th><th class="col-steps">Steps</th><th class="col-expected">Expected Result</th><th>Actual Result / Notes</th><th class="col-status">Status</th>
+  </tr></thead>
+  <tbody>
+
+  <tr>
+    <td class="col-id"><span class="tc-id">D-01</span></td>
+    <td><strong>Widget alignment — mobile view</strong></td>
+    <td><ol class="steps">
+      <li>Open cart page</li>
+      <li>Use DevTools to resize to mobile width (e.g. 375px)</li>
+      <li>Observe widget alignment</li>
+    </ol></td>
+    <td>Widget is aligned correctly (typically centred) at mobile-view widths</td>
+    <td><textarea class="result-field" placeholder="Actual result…"></textarea></td>
+    <td><div class="status-select">
+      <button class="status-btn" onclick="setStatus(this,'pass')">✅ Pass</button>
+      <button class="status-btn" onclick="setStatus(this,'fail')">❌ Fail</button>
+      <button class="status-btn" onclick="setStatus(this,'na')">— N/A</button>
+    </div></td>
+  </tr>
+
+  <tr>
+    <td class="col-id"><span class="tc-id">D-02</span></td>
+    <td><strong>Cart page widget — text wrapping at all widths</strong></td>
+    <td><ol class="steps">
+      <li>Open cart page with product in cart</li>
+      <li>Resize viewport from ~1200px down to ~250px using DevTools</li>
+      <li>Observe text wrapping at each width</li>
+    </ol></td>
+    <td>All widget text wraps cleanly at every width — no overflow, no truncation, no visual clutter</td>
+    <td><textarea class="result-field" placeholder="Actual result…"></textarea></td>
+    <td><div class="status-select">
+      <button class="status-btn" onclick="setStatus(this,'pass')">✅ Pass</button>
+      <button class="status-btn" onclick="setStatus(this,'fail')">❌ Fail</button>
+      <button class="status-btn" onclick="setStatus(this,'na')">— N/A</button>
+    </div></td>
+  </tr>
+
+  </tbody>
+</table>
+</div>
+
+<div class="subsection">Drawer Cart — Design Checks</div>
+<div class="table-wrap">
+<table>
+  <thead><tr>
+    <th class="col-id">TC ID</th><th class="col-scenario">Test Scenario</th><th class="col-steps">Steps</th><th class="col-expected">Expected Result</th><th>Actual Result / Notes</th><th class="col-status">Status</th>
+  </tr></thead>
+  <tbody>
+
+  <tr>
+    <td class="col-id"><span class="tc-id">D-03</span></td>
+    <td><strong>Drawer cart — CWC link gap from bottom</strong></td>
+    <td><ol class="steps">
+      <li>Open the drawer cart</li>
+      <li>Inspect the gap between the "Checkout Without Coverage" link and the bottom of the drawer</li>
+    </ol></td>
+    <td>There is a gap of 10px or more between the CWC link and the bottom edge of the drawer cart</td>
+    <td><textarea class="result-field" placeholder="Measured gap: __px"></textarea></td>
+    <td><div class="status-select">
+      <button class="status-btn" onclick="setStatus(this,'pass')">✅ Pass</button>
+      <button class="status-btn" onclick="setStatus(this,'fail')">❌ Fail</button>
+      <button class="status-btn" onclick="setStatus(this,'na')">— N/A</button>
+    </div></td>
+  </tr>
+
+  <tr>
+    <td class="col-id"><span class="tc-id">D-04</span></td>
+    <td><strong>Drawer cart — Route modal not covered by &lt;dialog&gt; element</strong></td>
+    <td><ol class="steps">
+      <li>Open drawer cart on desktop</li>
+      <li>Click the ⓘ icon to open the Route modal</li>
+      <li>Check if any overlay or &lt;dialog&gt; element covers the modal</li>
+    </ol></td>
+    <td>Route info modal is fully visible and not obscured by any &lt;dialog&gt; element or overlay</td>
+    <td><textarea class="result-field" placeholder="Actual result…"></textarea></td>
+    <td><div class="status-select">
+      <button class="status-btn" onclick="setStatus(this,'pass')">✅ Pass</button>
+      <button class="status-btn" onclick="setStatus(this,'fail')">❌ Fail</button>
+      <button class="status-btn" onclick="setStatus(this,'na')">— N/A</button>
+    </div></td>
+  </tr>
+
+  <tr>
+    <td class="col-id"><span class="tc-id">D-05</span></td>
+    <td><strong>Drawer cart widget — text wrapping at all widths</strong></td>
+    <td><ol class="steps">
+      <li>Open drawer cart with product in cart</li>
+      <li>Resize viewport from ~1200px down to ~250px</li>
+      <li>Observe text wrapping at each width</li>
+    </ol></td>
+    <td>All drawer cart widget text wraps cleanly at every width — no overflow, no truncation</td>
+    <td><textarea class="result-field" placeholder="Actual result…"></textarea></td>
+    <td><div class="status-select">
+      <button class="status-btn" onclick="setStatus(this,'pass')">✅ Pass</button>
+      <button class="status-btn" onclick="setStatus(this,'fail')">❌ Fail</button>
+      <button class="status-btn" onclick="setStatus(this,'na')">— N/A</button>
+    </div></td>
+  </tr>
+
+  </tbody>
+</table>
+</div>
+
+<!-- ── Summary ── -->
+<div class="summary">
+  <div class="summary-card">
+    <h2>📋 Test Run Summary</h2>
+    <div class="sum-grid">
+      <div class="sum-stat total"><div class="num" id="sum-total">0</div><div class="lbl">Total Executed</div></div>
+      <div class="sum-stat pass"><div class="num" id="sum-pass">0</div><div class="lbl">Passed</div></div>
+      <div class="sum-stat fail"><div class="num" id="sum-fail">0</div><div class="lbl">Failed</div></div>
+      <div class="sum-stat na"><div class="num" id="sum-na">0</div><div class="lbl">N/A / Skipped</div></div>
+    </div>
+    <div id="fail-list" class="fail-items"></div>
+    <div style="margin-top:20px">
+      <button class="btn-print" onclick="window.print()">🖨️ Print / Save PDF</button>
+    </div>
+    <div class="sign-row">
+      <div class="sign-box"><strong>Tested by</strong></div>
+      <div class="sign-box"><strong>Reviewed by</strong></div>
+      <div class="sign-box"><strong>Date</strong></div>
+    </div>
+  </div>
+</div>
+
+<script>
+document.getElementById('meta-date').value = new Date().toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'});
+
+// Sync meta inputs to inline labels
+['r1','r2','limit'].forEach(k => {
+  document.getElementById('meta-'+k).addEventListener('input', function() {
+    document.querySelectorAll('.meta-'+k+'-val').forEach(el => el.textContent = this.value || '—');
+    if (k === 'r1' || k === 'limit') {
+      const t1 = document.getElementById('meta-r1').value || '$100';
+      const lim = document.getElementById('meta-limit').value || '$5,000';
+      document.querySelectorAll('.meta-t1max-val').forEach(el => el.textContent = t1);
+      document.querySelectorAll('.meta-limit-val').forEach(el => el.textContent = lim);
+    }
+  });
+});
+
+function setStatus(btn, status) {
+  const wrap = btn.closest('.status-select');
+  wrap.querySelectorAll('.status-btn').forEach(b => b.classList.remove('active','pass','fail','na'));
+  btn.classList.add('active', status);
+  updateSummary();
+}
+
+function updateSummary() {
+  let pass=0, fail=0, na=0, total=0;
+  const failItems = [];
+  document.querySelectorAll('.status-select').forEach(wrap => {
+    const active = wrap.querySelector('.status-btn.active');
+    if (!active) return;
+    total++;
+    if (active.classList.contains('pass')) pass++;
+    else if (active.classList.contains('fail')) {
+      fail++;
+      const row = wrap.closest('tr');
+      const id = row ? row.querySelector('.tc-id') : null;
+      const scenario = row ? row.querySelector('td:nth-child(2) strong') : null;
+      if (id && scenario) failItems.push(`${id.textContent} — ${scenario.textContent}`);
+    }
+    else if (active.classList.contains('na')) na++;
+  });
+  document.getElementById('sum-total').textContent = total;
+  document.getElementById('sum-pass').textContent = pass;
+  document.getElementById('sum-fail').textContent = fail;
+  document.getElementById('sum-na').textContent = na;
+  const fl = document.getElementById('fail-list');
+  fl.innerHTML = failItems.length
+    ? '<div style="font-size:12px;font-weight:700;color:#c0392b;margin-bottom:6px">Failed test cases:</div>' +
+      failItems.map(f => `<div class="fail-item">❌ ${f}</div>`).join('')
+    : '';
+}
+</script>
+</body>
+</html>
