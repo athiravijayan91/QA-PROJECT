@@ -18,9 +18,11 @@ let HEADLESS  = false;
 // ── Live Dashboard Server ──────────────────────────────────────────────────
 let _sseClients = [];
 let _liveServer = null;
+let _sseBuffer  = []; // replay buffer for late-connecting clients
 
 function sseEmit(event, data) {
   const payload = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+  _sseBuffer.push(payload); // buffer every event
   _sseClients.forEach(res => { try { res.write(payload); } catch (_) {} });
 }
 
@@ -44,8 +46,9 @@ function startLiveServer() {
         'Connection': 'keep-alive',
       });
       res.write('retry: 1000\n\n');
+      // Replay all buffered events so late-connecting clients catch up
+      _sseBuffer.forEach(payload => { try { res.write(payload); } catch(_) {} });
       _sseClients.push(res);
-      if (BASE_URL) sseEmit('start', { url: BASE_URL });
       req.on('close', () => { _sseClients = _sseClients.filter(c => c !== res); });
       return;
     }
@@ -182,7 +185,7 @@ function log(section, name, status, detail = '', tcId = null) {
 }
 
 let _sectionCounter = 0;
-let _totalSections  = 11;
+let _totalSections  = 12;
 function sectionHeader(title) {
   _sectionCounter++;
   console.log(`\n  ${'─'.repeat(52)}`);
@@ -1259,6 +1262,82 @@ async function runQA(RATES) {
         'Add a gift card or non-shippable product to the cart and confirm: (1) Route widget does NOT appear, (2) Route is not added as a line item.');
     }
 
+    // ════════════════════════════════════════════════════════
+    sectionHeader('12 of 12 · Value Prop, Info Modal & Design Checks');
+    // ════════════════════════════════════════════════════════
+
+    try {
+      await safeGoto(cartUrl, 'cart (value prop checks)');
+      await waitForRouteWidget(page, 5000);
+      await page.waitForTimeout(500);
+
+      // ── Value prop wording ────────────────────────────────────────────────
+      const widgetText = await page.evaluate(() => {
+        const selectors = ['#route-widget','.route-widget','[id*="route-widget"]','[class*="route-widget"]','route-widget'];
+        for (const sel of selectors) {
+          const el = document.querySelector(sel);
+          if (el) return el.innerText || '';
+        }
+        return '';
+      });
+      const hasPremiumText = /order protected for \$[\d.]+/i.test(widgetText);
+      log('Value Prop', 'Widget shows "Order protected for $[amount]"',
+        hasPremiumText ? 'PASS' : 'WARN',
+        hasPremiumText ? `Text found: "${widgetText.slice(0,80).replace(/\s+/g,' ')}"` : 'Could not detect "Order protected for $X" in widget text',
+        'm-valuprop-wording');
+
+      // ── Info icon hover tooltip ───────────────────────────────────────────
+      const infoIcon = await page.$('[id*="route"] [data-tippy], [id*="route"] .tippy, [id*="route"] button[aria-label*="info"], [id*="route"] button[title*="info"], [id*="route"] [class*="info"], [class*="route"] [class*="info-icon"], [class*="route"] button[type="button"]');
+      if (infoIcon) {
+        await infoIcon.hover();
+        await page.waitForTimeout(800);
+        const tooltipText = await page.evaluate(() => {
+          const t = document.querySelector('[data-tippy-content], .tippy-content, [role="tooltip"], [class*="tooltip"]');
+          return t ? t.innerText || t.textContent : '';
+        });
+        const hasTooltip = tooltipText.length > 0;
+        log('Value Prop', 'Info icon hover tooltip appears',
+          hasTooltip ? 'PASS' : 'WARN',
+          hasTooltip ? `Tooltip text: "${tooltipText.slice(0,80).replace(/\s+/g,' ')}"` : 'Could not detect tooltip on hover — verify manually',
+          'm-valuprop-hover');
+      } else {
+        log('Value Prop', 'Info icon hover tooltip', 'WARN', 'Info icon not found — verify hover tooltip manually', 'm-valuprop-hover');
+      }
+
+      // ── Mobile alignment ──────────────────────────────────────────────────
+      await page.setViewportSize({ width: 375, height: 812 });
+      await safeGoto(cartUrl, 'cart (mobile design check)');
+      await waitForRouteWidget(page, 4000);
+      const mobileDesign = await page.evaluate(() => {
+        const selectors = ['#route-widget','.route-widget','[id*="route-widget"]','[class*="route-widget"]'];
+        for (const sel of selectors) {
+          const el = document.querySelector(sel);
+          if (el) {
+            const rect = el.getBoundingClientRect();
+            const style = window.getComputedStyle(el);
+            const overflows = rect.right > window.innerWidth + 5;
+            const centered = Math.abs((rect.left + rect.right) / 2 - window.innerWidth / 2) < 40;
+            return { found: true, overflows, centered, right: Math.round(rect.right), width: Math.round(rect.width) };
+          }
+        }
+        return { found: false };
+      });
+      if (mobileDesign.found) {
+        log('Design', 'Widget not overflowing mobile viewport (375px)',
+          mobileDesign.overflows ? 'FAIL' : 'PASS',
+          mobileDesign.overflows ? `Widget extends to ${mobileDesign.right}px (wider than 375px viewport)` : `Widget width: ${mobileDesign.width}px — fits within viewport`,
+          'm-d-align');
+      } else {
+        log('Design', 'Widget alignment on mobile', 'WARN', 'Widget not found at 375px — verify manually', 'm-d-align');
+      }
+
+      // ── Reset viewport ────────────────────────────────────────────────────
+      await page.setViewportSize({ width: 1280, height: 800 });
+
+    } catch(e) {
+      log('Value Prop', 'Value prop & design checks', 'WARN', 'Could not complete: ' + e.message.split('\n')[0]);
+    }
+
   } catch (err) {
     console.error('\n❌  Fatal error during QA run:', err.message);
     log('Fatal', 'QA run completed without errors', 'FAIL', err.message);
@@ -1387,9 +1466,10 @@ async function generateReport(results, siteUrl) {
   console.log('╚══════════════════════════════════════════════════════════╝');
   console.log(`\n  📋 Report → ${reportPath}\n`);
 
-  // Send done event to live dashboard, then shut down server after clients receive it
-  sseEmit('done', { pass, fail, warn, duration });
-  await new Promise(r => setTimeout(r, 2000));
+  // Send full report data + done event to the dashboard
+  sseEmit('report', { pass, fail, warn, duration, results, siteUrl });
+  sseEmit('done',   { pass, fail, warn, duration });
+  await new Promise(r => setTimeout(r, 3000));
   if (_liveServer) _liveServer.close();
 }
 
