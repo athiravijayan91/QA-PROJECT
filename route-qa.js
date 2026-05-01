@@ -1486,7 +1486,12 @@ async function generateReport(results, siteUrl) {
     // Wait for the UI to submit config via POST /start
     const uiConfig = await uiConfigPromise;
 
-    BASE_URL = uiConfig.url || BASE_URL;
+    // Strip markdown link format if pasted: [text](url) → url
+    let rawUrl = uiConfig.url || BASE_URL;
+    const mdMatch = rawUrl.match(/\[.*?\]\((https?:\/\/[^)]+)\)/);
+    if (mdMatch) rawUrl = mdMatch[1];
+    if (!rawUrl.startsWith('http')) rawUrl = 'https://' + rawUrl;
+    BASE_URL = rawUrl;
     HEADLESS = uiConfig.headless || false;
 
     // Build RATES from UI config
