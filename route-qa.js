@@ -25,166 +25,79 @@ function sseEmit(event, data) {
 }
 
 function startLiveServer() {
-  const DASHBOARD_HTML = `<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Route QA — Live</title>
-<style>
-  *{box-sizing:border-box;margin:0;padding:0}
-  body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#f5f5f7;color:#1d1d1f;min-height:100vh}
-  header{background:#fff;border-bottom:1px solid #e2e2ea;padding:18px 32px;display:flex;align-items:center;gap:16px;position:sticky;top:0;z-index:10}
-  header h1{font-size:18px;font-weight:700}
-  header .url{font-size:13px;color:#636366;margin-top:2px}
-  .counters{display:flex;gap:10px;margin-left:auto}
-  .pill{padding:5px 14px;border-radius:20px;font-size:13px;font-weight:600}
-  .pill.pass{background:#e8f8f0;color:#1a7a4a}
-  .pill.fail{background:#ffeaea;color:#c0392b}
-  .pill.warn{background:#fffbe6;color:#b07d00}
-  .progress-wrap{height:4px;background:#e2e2ea}
-  .progress-bar{height:4px;background:#0071e3;transition:width 0.3s ease;width:0}
-  main{max-width:860px;margin:28px auto;padding:0 24px 48px}
-  .section-block{background:#fff;border:1px solid #e2e2ea;border-radius:12px;margin-bottom:14px;overflow:hidden}
-  .section-title{padding:12px 18px;font-size:14px;font-weight:700;background:#fafafa;border-bottom:1px solid #f0f0f5;display:flex;align-items:center;gap:8px}
-  .section-title .badge{font-size:11px;font-weight:600;padding:2px 8px;border-radius:10px;background:#e2e2ea;color:#636366}
-  .result-row{padding:10px 18px;font-size:13px;border-top:1px solid #f5f5f7;display:flex;align-items:flex-start;gap:10px;animation:fadeIn 0.2s ease}
-  @keyframes fadeIn{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:none}}
-  .result-row .icon{font-size:15px;flex-shrink:0;margin-top:1px}
-  .result-row .name{flex:1;font-weight:500}
-  .result-row .detail{font-size:12px;color:#636366;margin-top:3px}
-  .result-row.FAIL .name{color:#c0392b}
-  .result-row.WARN .name{color:#b07d00}
-  .result-row.PASS .name{color:#1a7a4a}
-  .fix-toggle{display:inline-flex;align-items:center;gap:4px;margin-top:5px;font-size:11px;font-weight:600;color:#0071e3;cursor:pointer;border:none;background:none;padding:0;user-select:none}
-  .fix-toggle:hover{text-decoration:underline}
-  .fix-body{display:none;margin-top:6px;padding:10px 12px;background:#f0f6ff;border-left:3px solid #0071e3;border-radius:0 6px 6px 0;font-size:12px;color:#1d1d1f;line-height:1.6}
-  .fix-body.open{display:block;animation:fadeIn 0.15s ease}
-  .done-banner{text-align:center;padding:28px;background:#fff;border:1px solid #e2e2ea;border-radius:12px;margin-top:8px}
-  .done-banner h2{font-size:22px;margin-bottom:8px}
-  .done-banner .sub{color:#636366;font-size:14px}
-  .spinner{display:inline-block;width:14px;height:14px;border:2px solid #e2e2ea;border-top-color:#0071e3;border-radius:50%;animation:spin 0.7s linear infinite;vertical-align:middle;margin-right:6px}
-  @keyframes spin{to{transform:rotate(360deg)}}
-  #status-bar{padding:8px 32px;font-size:12px;color:#636366;background:#fafafa;border-bottom:1px solid #e2e2ea;display:flex;align-items:center}
-</style>
-</head>
-<body>
-<header>
-  <div>
-    <h1>🛡️ Route QA — Live Results</h1>
-    <div class="url" id="site-url">Waiting for run to start…</div>
-  </div>
-  <div class="counters">
-    <div class="pill pass">✅ <span id="cnt-pass">0</span></div>
-    <div class="pill fail">❌ <span id="cnt-fail">0</span></div>
-    <div class="pill warn">⚠️ <span id="cnt-warn">0</span></div>
-  </div>
-</header>
-<div id="status-bar"><span class="spinner"></span> Connecting…</div>
-<div class="progress-wrap"><div class="progress-bar" id="prog"></div></div>
-<main id="main"></main>
-
-<script>
-const TOTAL_SECTIONS = 11;
-let pass=0,fail=0,warn=0;
-const sections={};
-
-const es = new EventSource('/events');
-const statusBar = document.getElementById('status-bar');
-
-es.addEventListener('start', e => {
-  const d = JSON.parse(e.data);
-  document.getElementById('site-url').textContent = '🌐 ' + d.url;
-  statusBar.innerHTML = '<span class="spinner"></span> Running checks…';
-});
-
-es.addEventListener('section', e => {
-  const d = JSON.parse(e.data);
-  const block = document.createElement('div');
-  block.className = 'section-block';
-  block.id = 'sec-' + d.index;
-  block.innerHTML = \`<div class="section-title">\${d.title} <span class="badge" id="badge-\${d.index}">running…</span></div>\`;
-  document.getElementById('main').appendChild(block);
-  document.getElementById('prog').style.width = ((d.index-1)/TOTAL_SECTIONS*100)+'%';
-  block.scrollIntoView({behavior:'smooth',block:'end'});
-  sections[d.index] = { pass:0, fail:0, warn:0 };
-});
-
-es.addEventListener('result', e => {
-  const d = JSON.parse(e.data);
-  const block = document.getElementById('sec-' + d.sectionIndex);
-  if (!block) return;
-  const icons = {PASS:'✅',FAIL:'❌',WARN:'⚠️',INFO:'ℹ️'};
-  const fixId = 'fix-' + Math.random().toString(36).slice(2);
-  const fixHtml = d.fix
-    ? \`<button class="fix-toggle" onclick="document.getElementById('\${fixId}').classList.toggle('open');this.textContent=document.getElementById('\${fixId}').classList.contains('open')?'💡 Hide fix':'💡 How to fix'">💡 How to fix</button>
-       <div class="fix-body" id="\${fixId}">\${d.fix}</div>\`
-    : '';
-  const row = document.createElement('div');
-  row.className = 'result-row ' + d.status;
-  row.innerHTML = \`<div class="icon">\${icons[d.status]||'·'}</div>
-    <div><div class="name">\${d.name}</div>\${d.detail?'<div class="detail">→ '+d.detail+'</div>':''}\${fixHtml}</div>\`;
-  block.appendChild(row);
-  if (d.status==='PASS'){pass++;sections[d.sectionIndex].pass++}
-  else if (d.status==='FAIL'){fail++;sections[d.sectionIndex].fail++}
-  else if (d.status==='WARN'){warn++;sections[d.sectionIndex].warn++}
-  document.getElementById('cnt-pass').textContent=pass;
-  document.getElementById('cnt-fail').textContent=fail;
-  document.getElementById('cnt-warn').textContent=warn;
-  // update section badge
-  const s=sections[d.sectionIndex];
-  const badge=document.getElementById('badge-'+d.sectionIndex);
-  if(badge) badge.textContent=(s.fail?'❌ '+s.fail+' fail ':'')+(s.warn?'⚠️ '+s.warn+' warn ':'')+(s.fail===0&&s.warn===0?'✅ all pass':'');
-  row.scrollIntoView({behavior:'smooth',block:'end'});
-});
-
-es.addEventListener('done', e => {
-  const d = JSON.parse(e.data);
-  document.getElementById('prog').style.width='100%';
-  statusBar.innerHTML = '✓ Run complete in ' + d.duration + 's';
-  const banner = document.createElement('div');
-  banner.className='done-banner';
-  const emoji = d.fail===0 ? '🎉' : '⚠️';
-  banner.innerHTML=\`<h2>\${emoji} \${d.fail===0?'All checks passed!':d.fail+' check(s) failed'}</h2>
-    <div class="sub">✅ \${d.pass} passed &nbsp;·&nbsp; ❌ \${d.fail} failed &nbsp;·&nbsp; ⚠️ \${d.warn} warnings &nbsp;·&nbsp; \${d.duration}s</div>\`;
-  document.getElementById('main').appendChild(banner);
-  banner.scrollIntoView({behavior:'smooth'});
-  es.close();
-});
-
-es.onerror = () => { statusBar.textContent = 'Connection lost — run may have ended.'; es.close(); };
-</script>
-</body>
-</html>`;
+  let _uiStartResolve = null;
+  const uiStartPromise = new Promise(resolve => { _uiStartResolve = resolve; });
 
   _liveServer = http.createServer((req, res) => {
+    // CORS for all responses
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+
+    if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return; }
+
+    // SSE stream
     if (req.url === '/events') {
       res.writeHead(200, {
         'Content-Type': 'text/event-stream',
         'Cache-Control': 'no-cache',
         'Connection': 'keep-alive',
-        'Access-Control-Allow-Origin': '*',
       });
       res.write('retry: 1000\n\n');
       _sseClients.push(res);
-      // Replay current state for late-connecting browser
-      sseEmit('start', { url: BASE_URL });
+      if (BASE_URL) sseEmit('start', { url: BASE_URL });
       req.on('close', () => { _sseClients = _sseClients.filter(c => c !== res); });
+      return;
+    }
+
+    // Config submission from UI
+    if (req.url === '/start' && req.method === 'POST') {
+      let body = '';
+      req.on('data', chunk => { body += chunk; });
+      req.on('end', () => {
+        try {
+          const config = JSON.parse(body);
+          BASE_URL   = config.url || BASE_URL;
+          HEADLESS   = config.headless || false;
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: true }));
+          if (_uiStartResolve) { _uiStartResolve(config); _uiStartResolve = null; }
+        } catch (e) {
+          res.writeHead(400); res.end('Bad JSON');
+        }
+      });
+      return;
+    }
+
+    // Status endpoint
+    if (req.url === '/status') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ready: true }));
+      return;
+    }
+
+    // Serve checklist UI (main page)
+    const checklistPath = path.join(__dirname, 'route-qa-checklist-v2.html');
+    if (fs.existsSync(checklistPath)) {
+      res.writeHead(200, { 'Content-Type': 'text/html' });
+      res.end(fs.readFileSync(checklistPath));
     } else {
       res.writeHead(200, { 'Content-Type': 'text/html' });
-      res.end(DASHBOARD_HTML);
+      res.end('<h2>route-qa-checklist-v2.html not found</h2>');
     }
   });
 
   _liveServer.listen(3000, '127.0.0.1', () => {
-    console.log('  📡  Live dashboard → http://localhost:3000\n');
-    // Auto-open browser
+    console.log('  📡  QA Checklist UI → http://localhost:3000');
+    console.log('  ℹ️   Fill in the config form and click "Start QA Checklist" to begin\n');
     try {
       const { execSync } = require('child_process');
       const openCmd = process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'start' : 'xdg-open';
       execSync(`${openCmd} http://localhost:3000`);
     } catch (_) {}
   });
+
+  return uiStartPromise;
 }
 
 // ── Fix Suggestion Map ─────────────────────────────────────────────────────
@@ -256,18 +169,16 @@ function getFix(section, name) {
 const results = [];
 const startTime = Date.now();
 
-function log(section, name, status, detail = '') {
+function log(section, name, status, detail = '', tcId = null) {
   const icons = { PASS: '✅', FAIL: '❌', WARN: '⚠️ ', INFO: 'ℹ️ ' };
-  results.push({ section, name, status, detail });
+  results.push({ section, name, status, detail, tcId });
   const icon = icons[status] || '   ';
-  // Show detail only for FAIL and WARN — keeps PASS/INFO lines clean and scannable
   const suffix = (status === 'FAIL' || status === 'WARN') && detail
     ? `\n       → ${detail.replace(/\s+/g, ' ').trim().slice(0, 120)}`
     : '';
   console.log(`    ${icon} ${name}${suffix}`);
-  // Push to live dashboard (include fix suggestion for FAIL rows)
   const fix = status === 'FAIL' ? getFix(section, name) : null;
-  sseEmit('result', { sectionIndex: _sectionCounter, name, status, detail: detail.slice(0, 200), fix });
+  sseEmit('result', { sectionIndex: _sectionCounter, name, status, detail: detail.slice(0, 200), fix, tcId });
 }
 
 let _sectionCounter = 0;
@@ -564,9 +475,9 @@ async function runQA(RATES) {
 
     const desktopWidget = await findRouteWidget(page);
     if (desktopWidget.found) {
-      log('Cart Widget', 'Route widget present in cart DOM', 'PASS', `Selector: "${desktopWidget.selector}"`);
+      log('Cart Widget', 'Route widget present in cart DOM', 'PASS', `Selector: "${desktopWidget.selector}"`, 'TC-W1');
       log('Cart Widget', 'Route widget is visible to user', desktopWidget.visible ? 'PASS' : 'FAIL',
-        desktopWidget.visible ? 'Widget renders visibly' : 'Widget is hidden via CSS');
+        desktopWidget.visible ? 'Widget renders visibly' : 'Widget is hidden via CSS', 'TC-W1');
       if (desktopWidget.text) {
         log('Cart Widget', 'Widget text content', 'INFO', desktopWidget.text.replace(/\s+/g, ' ').trim());
       }
@@ -631,7 +542,8 @@ async function runQA(RATES) {
             const isCorrect = diff <= 0.15; // allow $0.15 for rounding differences
             log('Cart Widget', 'Route premium matches expected rate',
               isCorrect ? 'PASS' : 'FAIL',
-              `Expected: $${expectedPremium.toFixed(2)} (${expectedRate}% of $${subtotal.toFixed(2)})  |  Widget shows: $${displayedPremium.toFixed(2)}${!isCorrect ? `  ← ⚠️ MISMATCH — Δ$${diff.toFixed(2)}` : ' ✓'}`);
+              `Expected: $${expectedPremium.toFixed(2)} (${expectedRate}% of $${subtotal.toFixed(2)})  |  Widget shows: $${displayedPremium.toFixed(2)}${!isCorrect ? `  ← ⚠️ MISMATCH — Δ$${diff.toFixed(2)}` : ' ✓'}`,
+              subtotal <= RATES.tier1Max ? 'TC-04a' : 'TC-04b');
           } else if (desktopWidget.found) {
             log('Cart Widget', 'Route premium detectable in widget text', 'WARN',
               `Could not parse a price from widget text: "${widgetText.slice(0, 80).replace(/\s+/g, ' ')}"`);
@@ -713,7 +625,7 @@ async function runQA(RATES) {
         routeInCollection.length === 0 ? 'PASS' : 'FAIL',
         routeInCollection.length > 0
           ? `⚠️  Route product visible in storefront collection!\n         → Product URL: ${routeInCollection[0].url || '(URL not found)'}\n         → Title: "${routeInCollection[0].title}"`
-          : 'Route product not found in /collections/all — good');
+          : 'Route product not found in /collections/all — good', 's2-coll');
 
       // Check product recommendation sections for Route
       const routeInRecs = await page.evaluate(() => {
@@ -1481,9 +1393,54 @@ async function generateReport(results, siteUrl) {
   if (_liveServer) _liveServer.close();
 }
 
-promptConfig()
-  .then(rates => runQA(rates))
-  .catch(err => {
+// ── Entry Point ────────────────────────────────────────────────────────────
+// Start server → open browser → wait for UI config submission → run QA
+(async () => {
+  try {
+    console.log('\n╔══════════════════════════════════════════════════════════╗');
+    console.log('║           Route Integration — QA Runner                  ║');
+    console.log('╚══════════════════════════════════════════════════════════╝\n');
+
+    const uiConfigPromise = startLiveServer();
+
+    // Wait for the UI to submit config via POST /start
+    const uiConfig = await uiConfigPromise;
+
+    BASE_URL = uiConfig.url || BASE_URL;
+    HEADLESS = uiConfig.headless || false;
+
+    // Build RATES from UI config
+    const rates = {
+      tier1Max:      parseFloat(uiConfig.tier1Max)   || 100,
+      tier1Rate:     parseFloat(uiConfig.tier1Rate)  || 1.95,
+      tier1Format:   uiConfig.tier1Format || 'pct',
+      tier1PaidBy:   uiConfig.tier1PaidBy || 'customer',
+      tier1Default:  uiConfig.tier1Default || 'on',
+      tier2Rate:     parseFloat(uiConfig.tier2Rate)  || 2.5,
+      tier2Format:   uiConfig.tier2Format || 'pct',
+      tier2PaidBy:   uiConfig.tier2PaidBy || 'customer',
+      tier2Default:  uiConfig.tier2Default || 'off',
+      tier2Max:      parseFloat(uiConfig.tier2Max)   || 5000,
+      coverageLimit: parseFloat(uiConfig.coverageLimit) || 5000,
+      isDynamic:     uiConfig.rateType === 'dynamic',
+      cartWidget:    uiConfig.cartWidget || '',
+      checkoutWidget: uiConfig.checkoutWidget || '',
+      platform:      uiConfig.platform || 'shopify',
+      merchant:      uiConfig.merchant || '',
+    };
+
+    console.log(`  🌐  Site: ${BASE_URL}`);
+    console.log(`  🏪  Merchant: ${rates.merchant}`);
+    console.log(`  🛒  Cart widget: ${rates.cartWidget}`);
+    console.log(`  💳  Checkout widget: ${rates.checkoutWidget}`);
+    console.log(`  👁   Browser: ${HEADLESS ? 'headless' : 'visible'}\n`);
+
+    sseEmit('start', { url: BASE_URL, merchant: rates.merchant });
+    await new Promise(r => setTimeout(r, 300));
+
+    await runQA(rates);
+  } catch (err) {
     console.error('Unhandled error:', err);
     process.exit(1);
-  });
+  }
+})();
