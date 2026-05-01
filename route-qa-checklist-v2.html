@@ -711,6 +711,16 @@ function autoFillCheck(tcId, status) {
 
 
 // ── Final Report Renderer ──────────────────────────────────────────────────
+function escHtml(s) {
+  if (!s) return '';
+  return String(s)
+    .replace(/&/g,'&amp;')
+    .replace(/</g,'&lt;')
+    .replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;')
+    .replace(/'/g,'&#39;');
+}
+
 function showFinalReport(data) {
   const { pass, fail, warn, duration, results, siteUrl } = data;
   const total = pass + fail + warn;
@@ -766,10 +776,10 @@ function showFinalReport(data) {
       <div class="fr-fails-hdr">❌ Failed Checks (${fails.length}) — Fix these before sign-off</div>`;
     fails.forEach(r => {
       html += `<div class="fr-fail-item">
-        <div class="fr-fail-section">${r.section || ''}</div>
-        <div class="fr-fail-name">${r.name}</div>
-        ${r.detail ? `<div class="fr-fail-detail">→ ${r.detail}</div>` : ''}
-        ${r.fix ? `<div class="fr-fix">${r.fix}</div>` : ''}
+        <div class="fr-fail-section">${escHtml(r.section)}</div>
+        <div class="fr-fail-name">${escHtml(r.name)}</div>
+        ${r.detail ? `<div class="fr-fail-detail">→ ${escHtml(r.detail)}</div>` : ''}
+        ${r.fix ? `<div class="fr-fix">${escHtml(r.fix)}</div>` : ''}
       </div>`;
     });
     html += '</div>';
@@ -800,8 +810,8 @@ function showFinalReport(data) {
       html += `<div class="fr-row ${cls}">
         <div class="fr-row-icon">${icons[r.status] || 'ℹ️'}</div>
         <div class="fr-row-content">
-          <div class="fr-row-name">${r.name}</div>
-          ${r.detail ? `<div class="fr-row-detail">→ ${r.detail}</div>` : ''}
+          <div class="fr-row-name">${escHtml(r.name)}</div>
+          ${r.detail ? `<div class="fr-row-detail">→ ${escHtml(r.detail)}</div>` : ''}
         </div>
       </div>`;
     });
@@ -1016,13 +1026,21 @@ function connectToRunner(sessionMeta, allCheckItems) {
   });
 
   es.addEventListener('report', e => {
-    const d = JSON.parse(e.data);
-    // Hide live feed, show final report
-    const feed = document.getElementById('rd-feed');
-    if (feed) feed.style.display = 'none';
-    const doneBanner = document.getElementById('rd-done-banner');
-    if (doneBanner) doneBanner.style.display = 'none';
-    showFinalReport(d);
+    // Use summary stats from the event but build the report from rdResults
+    // (avoids large SSE payload truncation issues)
+    try {
+      const d = JSON.parse(e.data);
+      const feed = document.getElementById('rd-feed');
+      if (feed) feed.style.display = 'none';
+      const doneBanner = document.getElementById('rd-done-banner');
+      if (doneBanner) doneBanner.style.display = 'none';
+      // Use rdResults (already populated from individual result events)
+      showFinalReport({
+        pass: d.pass, fail: d.fail, warn: d.warn,
+        duration: d.duration, siteUrl: d.siteUrl,
+        results: rdResults   // ← use local results, not the large SSE payload
+      });
+    } catch(e) { console.error('report event error:', e); }
   });
 
   es.addEventListener('done', e => {

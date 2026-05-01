@@ -1516,7 +1516,7 @@ async function generateReport(results, siteUrl) {
     console.log(`  👁   Browser: ${HEADLESS ? 'headless' : 'visible'}\n`);
 
     sseEmit('start', { url: BASE_URL, merchant: rates.merchant });
-    await new Promise(r => setTimeout(r, 300));
+    await new Promise(r => setTimeout(r, 1500)); // wait for browser SSE connection
 
     await runQA(rates);
   } catch (err) {
