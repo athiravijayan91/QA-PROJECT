@@ -464,33 +464,29 @@ document.querySelectorAll('input[name="rate-type"]').forEach(r => r.addEventList
 }));
 
 function getRateConfig() {
-  const isDynamic = document.querySelector('input[name="rate-type"]:checked').value === 'dynamic';
-  const t1Rate   = parseFloat(document.getElementById('tier1-rate').value) || null;
-  const t1Format = document.getElementById('tier1-rate-type').value;
-  const t1Min    = parseFloat(document.getElementById('tier1-min').value) || 0;
-  const t1Max    = parseFloat(document.getElementById('tier1-max').value) || 100;
+  const rateTypeEl = document.querySelector('input[name="rate-type"]:checked');
+  const isDynamic  = rateTypeEl ? rateTypeEl.value === 'dynamic' : false;
+
+  const g = id => document.getElementById(id);
+  const v = id => g(id)?.value || '';
+
+  const t1Rate   = parseFloat(v('tier1-rate'))   || null;
+  const t1Format = v('tier1-rate-type')          || 'pct';
+  const t1Min    = parseFloat(v('tier1-min'))     || 0;
+  const t1Max    = parseFloat(v('tier1-max'))     || 100;
   const t1Default= document.querySelector('input[name="tier1-default"]:checked')?.value || 'on';
-  const t1PaidBy = document.getElementById('tier1-paidby').value;
+  const t1PaidBy = v('tier1-paidby')             || 'customer';
 
-  const t2Rate   = isDynamic ? (parseFloat(document.getElementById('tier2-rate').value) || null) : null;
-  const t2Format = document.getElementById('tier2-rate-type').value;
-  const t2Min    = parseFloat(document.getElementById('tier2-min').value) || 100;
-  const t2Max    = parseFloat(document.getElementById('tier2-max').value) || 5000;
+  const t2Rate   = isDynamic ? (parseFloat(v('tier2-rate'))  || null) : null;
+  const t2Format = v('tier2-rate-type')          || 'pct';
+  const t2Min    = parseFloat(v('tier2-min'))     || 100;
+  const t2Max    = parseFloat(v('tier2-max'))     || 5000;
   const t2Default= document.querySelector('input[name="tier2-default"]:checked')?.value || 'off';
-  const t2PaidBy = document.getElementById('tier2-paidby').value;
+  const t2PaidBy = v('tier2-paidby')             || 'customer';
 
-  const limit    = parseFloat(document.getElementById('cfg-covlimit').value) || 5000;
+  const limit    = parseFloat(v('cfg-covlimit'))  || 5000;
   return { isDynamic, t1Rate, t1Format, t1Min, t1Max, t1Default, t1PaidBy,
            t2Rate, t2Format, t2Min, t2Max, t2Default, t2PaidBy, limit };
-}
-
-function getRateConfig() {
-  const isDynamic = document.querySelector('input[name="rate-type"]:checked').value === 'dynamic';
-  const r1 = parseFloat(document.getElementById('cfg-rate1').value) || null;
-  const r2 = isDynamic ? (parseFloat(document.getElementById('cfg-rate2').value) || null) : null;
-  const t1max = parseFloat(document.getElementById('cfg-t1max').value) || 100;
-  const limit = parseFloat(document.getElementById('cfg-covlimit').value) || 5000;
-  return { isDynamic, r1, r2, t1max, limit };
 }
 
 // ── Widget note helpers ────────────────────────────────────────────────────
