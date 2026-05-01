@@ -861,6 +861,7 @@ function connectToRunner(sessionMeta, allCheckItems) {
 
 // ── Render checklist ───────────────────────────────────────────────────────
 async function startChecklist() {
+  try {
   const url      = document.getElementById('cfg-url').value.trim();
   const cart     = document.getElementById('cfg-cart').value;
   const checkout = document.getElementById('cfg-checkout').value;
@@ -989,6 +990,10 @@ async function startChecklist() {
   main.appendChild(sum);
 
   updateProgress();
+  } catch(err) {
+    alert('Error starting checklist: ' + err.message);
+    console.error('startChecklist error:', err);
+  }
 }
 
 function setStatus(id, status, btn, secId) {
