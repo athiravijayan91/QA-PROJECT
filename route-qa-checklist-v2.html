@@ -160,6 +160,51 @@ main{max-width:860px;margin:0 auto;padding:0 24px 60px;display:none}
   .rd-stat{-webkit-print-color-adjust:exact;print-color-adjust:exact}
   .rd-card.c-fail,.rd-card.c-warn,.rd-card.c-pass{-webkit-print-color-adjust:exact;print-color-adjust:exact}
 }
+
+/* ── Final Report ── */
+#final-report{display:none;max-width:940px;margin:0 auto;padding:24px 24px 120px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif}
+.fr-header{background:#1a1a2e;border-radius:14px;padding:24px 28px;color:#fff;margin-bottom:20px;display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap}
+.fr-header h2{font-size:20px;font-weight:700;margin:0 0 4px}
+.fr-header p{font-size:13px;opacity:.55;margin:0}
+.fr-score{text-align:right;flex-shrink:0}
+.fr-score .big{font-size:36px;font-weight:800;line-height:1}
+.fr-score .lbl{font-size:11px;opacity:.55;margin-top:2px;text-transform:uppercase;letter-spacing:.5px}
+.fr-stats{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:20px}
+.fr-stat{background:#fff;border:1px solid #e2e2ea;border-radius:12px;padding:16px;text-align:center}
+.fr-stat .n{font-size:32px;font-weight:800;line-height:1}
+.fr-stat .l{font-size:11px;color:#636366;margin-top:4px;font-weight:600;text-transform:uppercase;letter-spacing:.5px}
+.fr-stat.p{border-color:#34c759;background:#f0fdf4}.fr-stat.p .n{color:#1a7a4a}
+.fr-stat.f{border-color:#ff3b30;background:#fff5f5}.fr-stat.f .n{color:#c0392b}
+.fr-stat.w{border-color:#ffcc00;background:#fffdf0}.fr-stat.w .n{color:#b07d00}
+.fr-stat.d{border-color:#0071e3;background:#eff6ff}.fr-stat.d .n{color:#0071e3}
+/* Failed section */
+.fr-fails{background:#fff5f5;border:1.5px solid #ffcccc;border-radius:12px;margin-bottom:20px;overflow:hidden}
+.fr-fails-hdr{background:#ffeaea;padding:14px 18px;font-size:14px;font-weight:700;color:#c0392b;display:flex;align-items:center;gap:8px}
+.fr-fail-item{padding:14px 18px;border-top:1px solid #ffdddd}
+.fr-fail-name{font-size:14px;font-weight:600;color:#c0392b;margin-bottom:4px}
+.fr-fail-section{font-size:11px;color:#aeaeb2;font-weight:500;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px}
+.fr-fail-detail{font-size:13px;color:#636366;margin-bottom:8px}
+.fr-fix{background:#fff;border-left:3px solid #ff3b30;padding:10px 14px;border-radius:0 8px 8px 0;font-size:13px;color:#1d1d1f;line-height:1.6}
+.fr-fix::before{content:'💡 ';font-style:normal}
+/* All results */
+.fr-section{background:#fff;border:1px solid #e2e2ea;border-radius:12px;margin-bottom:12px;overflow:hidden}
+.fr-section-hdr{background:#fafafa;padding:12px 18px;font-size:13px;font-weight:700;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid #f0f0f5;cursor:pointer;user-select:none}
+.fr-section-hdr:hover{background:#f0f0f5}
+.fr-section-badge{font-size:11px;font-weight:600;padding:2px 10px;border-radius:8px}
+.fr-section-badge.all-pass{background:#e8f8f0;color:#1a7a4a}
+.fr-section-badge.has-fail{background:#ffeaea;color:#c0392b}
+.fr-section-badge.has-warn{background:#fffbe6;color:#b07d00}
+.fr-section-body{display:block}
+.fr-row{padding:10px 18px;border-top:1px solid #f5f5f7;display:flex;align-items:flex-start;gap:10px;font-size:13px}
+.fr-row-icon{flex-shrink:0;margin-top:1px}
+.fr-row-content{flex:1}
+.fr-row-name{font-weight:500;color:#1d1d1f}
+.fr-row-detail{font-size:12px;color:#636366;margin-top:2px}
+.fr-row.fail .fr-row-name{color:#c0392b}
+.fr-row.warn .fr-row-name{color:#b07d00}
+/* Meta bar */
+.fr-meta{background:#f5f5f7;border:1px solid #e2e2ea;border-radius:10px;padding:12px 18px;font-size:12px;color:#636366;margin-bottom:20px;display:flex;flex-wrap:wrap;gap:12px}
+.fr-meta strong{color:#1d1d1f}
 </style>
 </head>
 <body>
@@ -399,6 +444,9 @@ main{max-width:860px;margin:0 auto;padding:0 24px 60px;display:none}
 <!-- ── Checklist Sections ── -->
 <main id="checklist-main"></main>
 <!-- Results Dashboard -->
+<!-- Final Report -->
+<div id="final-report"></div>
+
 <div id="results-dashboard">
   <div class="rd-topbar">
     <div class="rd-topbar-left">
@@ -661,6 +709,133 @@ function autoFillCheck(tcId, status) {
   }
 }
 
+
+// ── Final Report Renderer ──────────────────────────────────────────────────
+function showFinalReport(data) {
+  const { pass, fail, warn, duration, results, siteUrl } = data;
+  const total = pass + fail + warn;
+  const score = total ? Math.round((pass / total) * 100) : 0;
+  const scoreColor = fail === 0 ? '#1a7a4a' : fail <= 2 ? '#b07d00' : '#c0392b';
+  const statusText = fail === 0 ? 'All checks passed' : fail + ' issue' + (fail > 1 ? 's' : '') + ' found';
+
+  // Group results by section
+  const sections = {};
+  (results || []).forEach(r => {
+    const sec = r.section || 'General';
+    if (!sections[sec]) sections[sec] = [];
+    sections[sec].push(r);
+  });
+
+  const fails = (results || []).filter(r => r.status === 'FAIL');
+
+  // Meta info
+  const meta = rdSessionMeta || {};
+
+  let html = `
+  <div class="fr-header">
+    <div>
+      <h2>🛡️ Route QA — ${meta.merchant || siteUrl || 'Results'}</h2>
+      <p>${siteUrl || ''} &nbsp;·&nbsp; ${meta.cart ? meta.cart.replace('pref-checkout','Preferred Checkout') : ''} &nbsp;·&nbsp; ${new Date().toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'})} &nbsp;·&nbsp; ${duration}s</p>
+    </div>
+    <div class="fr-score">
+      <div class="big" style="color:${scoreColor}">${score}%</div>
+      <div class="lbl">${statusText}</div>
+    </div>
+  </div>
+
+  <div class="fr-meta">
+    <span><strong>Tester:</strong> ${meta.tester || '—'}</span>
+    <span><strong>Platform:</strong> ${meta.platform || '—'}</span>
+    <span><strong>Cart widget:</strong> ${meta.cart || '—'}</span>
+    <span><strong>Checkout widget:</strong> ${meta.checkout || '—'}</span>
+    <span><strong>QA type:</strong> ${meta.qaType || '—'}</span>
+    ${meta.ticket ? `<span><strong>Ticket:</strong> ${meta.ticket}</span>` : ''}
+    <span><strong>Duration:</strong> ${duration}s</span>
+  </div>
+
+  <div class="fr-stats">
+    <div class="fr-stat p"><div class="n">${pass}</div><div class="l">✅ Passed</div></div>
+    <div class="fr-stat f"><div class="n">${fail}</div><div class="l">❌ Failed</div></div>
+    <div class="fr-stat w"><div class="n">${warn}</div><div class="l">⚠️ Warnings</div></div>
+    <div class="fr-stat d"><div class="n">${total}</div><div class="l">Total checks</div></div>
+  </div>`;
+
+  // Failed checks section
+  if (fails.length) {
+    html += `<div class="fr-fails">
+      <div class="fr-fails-hdr">❌ Failed Checks (${fails.length}) — Fix these before sign-off</div>`;
+    fails.forEach(r => {
+      html += `<div class="fr-fail-item">
+        <div class="fr-fail-section">${r.section || ''}</div>
+        <div class="fr-fail-name">${r.name}</div>
+        ${r.detail ? `<div class="fr-fail-detail">→ ${r.detail}</div>` : ''}
+        ${r.fix ? `<div class="fr-fix">${r.fix}</div>` : ''}
+      </div>`;
+    });
+    html += '</div>';
+  } else {
+    html += `<div style="background:#e8f8f0;border:1.5px solid #34c759;border-radius:12px;padding:16px 20px;margin-bottom:20px;font-size:14px;font-weight:600;color:#1a7a4a">
+      🎉 All automated checks passed! Complete the manual checks below and save your report.
+    </div>`;
+  }
+
+  // All results by section
+  html += '<h3 style="font-size:14px;font-weight:700;margin-bottom:12px;color:#636366;text-transform:uppercase;letter-spacing:.5px">All Results by Section</h3>';
+  Object.entries(sections).forEach(([secName, items]) => {
+    const secFail = items.filter(i => i.status === 'FAIL').length;
+    const secWarn = items.filter(i => i.status === 'WARN').length;
+    const badgeCls = secFail ? 'has-fail' : secWarn ? 'has-warn' : 'all-pass';
+    const badgeTxt = secFail ? `❌ ${secFail} failed` : secWarn ? `⚠️ ${secWarn} warnings` : '✅ All passed';
+    const secId = 'sec-' + secName.replace(/[^a-z0-9]/gi,'_');
+
+    html += `<div class="fr-section">
+      <div class="fr-section-hdr" onclick="var b=document.getElementById('${secId}');b.style.display=b.style.display==='none'?'block':'none'">
+        ${secName}
+        <span class="fr-section-badge ${badgeCls}">${badgeTxt}</span>
+      </div>
+      <div class="fr-section-body" id="${secId}">`;
+    items.forEach(r => {
+      const icons = { PASS:'✅', FAIL:'❌', WARN:'⚠️', INFO:'ℹ️' };
+      const cls = (r.status || '').toLowerCase();
+      html += `<div class="fr-row ${cls}">
+        <div class="fr-row-icon">${icons[r.status] || 'ℹ️'}</div>
+        <div class="fr-row-content">
+          <div class="fr-row-name">${r.name}</div>
+          ${r.detail ? `<div class="fr-row-detail">→ ${r.detail}</div>` : ''}
+        </div>
+      </div>`;
+    });
+    html += '</div></div>';
+  });
+
+  // Manual checks
+  const manualResults = rdResults.filter(r => r.manual);
+  if (manualResults.length) {
+    html += `<div class="fr-section">
+      <div class="fr-section-hdr">✏️ Manual Checks</div>
+      <div class="fr-section-body">`;
+    manualResults.forEach(r => {
+      const icons = { PASS:'✅', FAIL:'❌', NA:'—' };
+      html += `<div class="fr-row">
+        <div class="fr-row-icon">${icons[r.status] || '⬜'}</div>
+        <div class="fr-row-content"><div class="fr-row-name">${r.name}</div></div>
+      </div>`;
+    });
+    html += '</div></div>';
+  }
+
+  const el = document.getElementById('final-report');
+  el.innerHTML = html;
+  el.style.display = 'block';
+
+  // Scroll to top of report
+  el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+  // Update action bar
+  document.getElementById('rd-action-lbl').textContent =
+    fail === 0 ? '🎉 All checks passed — ready to save' : `⚠️ ${fail} failed · ${pass} passed · ${warn} warnings`;
+}
+
 // ── Results Dashboard State ───────────────────────────────────────────────
 let rdResults = [];         // all streamed results
 let rdManualItems = [];     // manual check items for the dashboard
@@ -838,6 +1013,16 @@ function connectToRunner(sessionMeta, allCheckItems) {
     rdAddCard(d);
     // Also auto-fill the manual checklist rows if they exist
     if (d.tcId) autoFillCheck(d.tcId, d.status);
+  });
+
+  es.addEventListener('report', e => {
+    const d = JSON.parse(e.data);
+    // Hide live feed, show final report
+    const feed = document.getElementById('rd-feed');
+    if (feed) feed.style.display = 'none';
+    const doneBanner = document.getElementById('rd-done-banner');
+    if (doneBanner) doneBanner.style.display = 'none';
+    showFinalReport(d);
   });
 
   es.addEventListener('done', e => {
