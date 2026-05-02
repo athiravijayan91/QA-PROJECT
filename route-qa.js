@@ -365,16 +365,17 @@ async function runQA(RATES) {
     '--disable-web-security',
     '--disable-features=IsolateOrigins,site-per-process',
   ];
+  const windowArgs = [...launchArgs, '--start-maximized'];
   try {
-    browser = await chromium.launch({ channel: 'chrome', headless: HEADLESS, slowMo: HEADLESS ? 0 : 100, args: launchArgs });
+    browser = await chromium.launch({ channel: 'chrome', headless: HEADLESS, slowMo: HEADLESS ? 0 : 100, args: windowArgs });
     console.log('  🌐  Using real Chrome browser');
   } catch (_) {
-    browser = await chromium.launch({ headless: HEADLESS, slowMo: HEADLESS ? 0 : 100, args: launchArgs });
+    browser = await chromium.launch({ headless: HEADLESS, slowMo: HEADLESS ? 0 : 100, args: windowArgs });
     console.log('  🌐  Using bundled Chromium');
   }
 
   const context = await browser.newContext({
-    viewport: { width: 1280, height: 800 },
+    viewport: { width: 1920, height: 1080 },
     userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
     locale: 'en-US',
     timezoneId: 'America/New_York',
