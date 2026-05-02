@@ -185,7 +185,7 @@ function log(section, name, status, detail = '', tcId = null) {
 }
 
 let _sectionCounter = 0;
-let _totalSections  = 12;
+let _totalSections  = 14;
 function sectionHeader(title) {
   _sectionCounter++;
   console.log(`\n  ${'─'.repeat(52)}`);
@@ -405,937 +405,757 @@ async function runQA(RATES) {
     return false;
   }
 
-  let productUrl = null;
+  // ── Shared state ────────────────────────────────────────────────────────
+  let productUrl  = null;
+  let productUrl2 = null; // second product for multi-product tests
   let addedToCart = false;
-  const cartUrl = new URL('/cart', BASE_URL).href;
+  const cartUrl   = new URL('/cart', BASE_URL).href;
+
+  // ── Helper: clear cart ────────────────────────────────────────────────────
+  async function clearCart() {
+    await page.evaluate(async () => { await fetch('/cart/clear.js', { method: 'POST' }); });
+    await page.waitForTimeout(300);
+  }
+
+  // ── Helper: add product via API ───────────────────────────────────────────
+  async function addProductToCartApi(variantId) {
+    return page.evaluate(async (vid) => {
+      const r = await fetch('/cart/add.js', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: vid, quantity: 1 }),
+      });
+      return r.ok;
+    }, String(variantId));
+  }
+
+  // ── Helper: find checkout button and click ────────────────────────────────
+  async function clickCheckout() {
+    const selectors = [
+      'button[name="checkout"]', 'input[name="checkout"]',
+      '[data-testid="checkout-button"]', '.checkout-button',
+      'a[href*="/checkout"]', '#checkout', 'button[id*="checkout"]',
+      '[class*="checkout-btn"]', '[class*="checkout_btn"]',
+      'form[action*="/checkout"] button[type="submit"]',
+    ];
+    for (const sel of selectors) {
+      const btn = await page.$(sel);
+      if (btn) {
+        await btn.scrollIntoViewIfNeeded();
+        await btn.click({ timeout: 5000 });
+        return true;
+      }
+    }
+    return false;
+  }
+
+  // ── Helper: find CWC link and click ──────────────────────────────────────
+  async function clickCWC() {
+    const selectors = [
+      'a[class*="without-coverage"]', 'a[class*="cwc"]',
+      'a[id*="without-coverage"]', 'button[class*="without"]',
+      '[data-cwc]', '[data-without-coverage]',
+    ];
+    // Also text-based
+    for (const sel of selectors) {
+      const el = await page.$(sel);
+      if (el) { await el.click(); return true; }
+    }
+    // Text search fallback
+    const cwcEl = await page.evaluateHandle(() => {
+      const all = Array.from(document.querySelectorAll('a, button'));
+      return all.find(el => /checkout without coverage|without coverage|no coverage/i.test(el.innerText || el.textContent));
+    });
+    if (cwcEl && await cwcEl.evaluate(el => !!el)) {
+      await cwcEl.click();
+      return true;
+    }
+    return false;
+  }
+
+  // ── Helper: count Route items on checkout page ────────────────────────────
+  async function getRouteCountAtCheckout() {
+    return page.evaluate(() => {
+      const fullText = document.body.innerText || '';
+      // Count lines in order summary that mention Route
+      const lineItems = document.querySelectorAll(
+        '[class*="line-item"], [class*="product__description"], [class*="product-item"], ' +
+        '.order-summary__emphasis, [data-order-summary] tr, ' +
+        '.checkout__order-summary .product, [class*="checkout-item"]'
+      );
+      let count = 0;
+      for (const el of lineItems) {
+        const t = el.innerText || el.textContent || '';
+        if (/route/i.test(t)) count++;
+      }
+      // Fallback: text scan
+      if (count === 0 && /routes*(package|protection|shipping|insurance)/i.test(fullText)) count = 1;
+      return count;
+    });
+  }
+
+  // ── Helper: get all product URLs from homepage/collections ────────────────
+  async function discoverProducts() {
+    await safeGoto(BASE_URL, 'homepage');
+    let links = await page.$$eval('a[href*="/products/"]',
+      els => [...new Set(els.map(e => e.href))]
+        .filter(h => !h.includes('/collections') && !h.includes('route'))
+        .slice(0, 5)
+    );
+    if (links.length < 2) {
+      await safeGoto(new URL('/collections/all', BASE_URL).href, 'collections/all');
+      links = await page.$$eval('a[href*="/products/"]',
+        els => [...new Set(els.map(e => e.href))]
+          .filter(h => !h.includes('route'))
+          .slice(0, 5)
+      );
+    }
+    productUrl  = links[0] || null;
+    productUrl2 = links[1] || null;
+  }
 
   try {
-    // ════════════════════════════════════════════════════════
-    sectionHeader('1 of 11 · Script & Network Loading');
-    // ════════════════════════════════════════════════════════
+    // Discover products first (needed by most tests)
+    await discoverProducts();
 
-    const loaded = await safeGoto(BASE_URL, 'homepage');
-    if (!loaded) {
-      log('Script Loading', 'Site is reachable', 'FAIL', 'Site blocked the automated browser. Run WITHOUT --headless (default) so a real Chrome window opens.');
-      return;
-    }
-    await page.waitForTimeout(1000);
-
-    const routeScripts = await findRouteScripts(page);
-    if (routeScripts.length > 0) {
-      log('Script Loading', 'Route script tag found', 'PASS', routeScripts[0]);
-    } else {
-      log('Script Loading', 'Route script tag found', 'FAIL', 'No <script src="...route..."> found on homepage');
-    }
-
-    const routeGlobals = await page.evaluate(() => Object.keys(window).filter(k => /route/i.test(k)));
-    if (routeGlobals.length > 0) {
-      log('Script Loading', 'Route JS global object present', 'PASS', `window.${routeGlobals[0]}`);
-    } else {
-      log('Script Loading', 'Route JS global object present', 'INFO', 'No Route global on homepage — may appear after cart load');
-    }
-
-    // ════════════════════════════════════════════════════════
-    sectionHeader('2 of 11 · Finding a Product & Adding to Cart');
-    // ════════════════════════════════════════════════════════
-
-    // Find a product URL
-    try {
-      const links = await page.$$eval(
-        'a[href*="/products/"]',
-        els => [...new Set(els.map(e => e.href))].filter(h => !h.includes('/collections')).slice(0, 5)
-      );
-      if (links.length > 0) {
-        productUrl = links[0];
-        log('Add to Cart', 'Found product page link', 'PASS', productUrl);
-      } else {
-        log('Add to Cart', 'Found product page link', 'WARN', 'No /products/ links on homepage — trying /collections/all');
-        await safeGoto(new URL('/collections/all', BASE_URL).href, 'collections');
-        const collLinks = await page.$$eval('a[href*="/products/"]', els => [...new Set(els.map(e => e.href))].slice(0, 3));
-        if (collLinks.length > 0) productUrl = collLinks[0];
-      }
-    } catch (e) {
-      log('Add to Cart', 'Product discovery', 'WARN', e.message);
-    }
-
+    // ════════════════════════════════════════════════════════════════════════
+    sectionHeader('1 · Widget Version Confirmation');
+    // ════════════════════════════════════════════════════════════════════════
     if (productUrl) {
       await safeGoto(productUrl, 'product page');
       addedToCart = await clickAddToCart(page);
-      if (addedToCart) {
-        log('Add to Cart', 'Clicked Add to Cart button', 'PASS');
-      } else {
-        log('Add to Cart', 'Add to Cart button found', 'WARN', 'Could not find a generic add-to-cart button — widget checks may be limited');
-      }
-    }
-
-    // ════════════════════════════════════════════════════════
-    sectionHeader('3 of 11 · Cart Page — Route Widget Checks');
-    // ════════════════════════════════════════════════════════
-
-    await safeGoto(cartUrl, 'cart');
-    await waitForRouteWidget(page, 5000); // wait up to 5s for widget to render
-    await page.waitForTimeout(500);       // small extra buffer for dynamic carts
-
-    const desktopWidget = await findRouteWidget(page);
-    if (desktopWidget.found) {
-      log('Cart Widget', 'Route widget present in cart DOM', 'PASS', `Selector: "${desktopWidget.selector}"`, 'TC-W1');
-      log('Cart Widget', 'Route widget is visible to user', desktopWidget.visible ? 'PASS' : 'FAIL',
-        desktopWidget.visible ? 'Widget renders visibly' : 'Widget is hidden via CSS', 'TC-W1');
-      if (desktopWidget.text) {
-        log('Cart Widget', 'Widget text content', 'INFO', desktopWidget.text.replace(/\s+/g, ' ').trim());
+      await safeGoto(cartUrl, 'cart');
+      await waitForRouteWidget(page, 5000);
+      await page.waitForTimeout(400);
+      const widget = await findRouteWidget(page);
+      log('Widget Confirmation', 'Preferred Checkout widget loads on cart page',
+        widget.found ? 'PASS' : 'FAIL',
+        widget.found ? `Widget found: ${widget.selector}` : 'Route widget not found after adding a product to cart',
+        'TC-W');
+      if (widget.found) {
+        log('Widget Confirmation', 'Widget is visible to customer',
+          widget.visible ? 'PASS' : 'FAIL',
+          widget.visible ? '' : 'Widget is in DOM but hidden via CSS', 'TC-W');
+        if (widget.text) log('Widget Confirmation', 'Widget text content', 'INFO', widget.text.replace(/\s+/g,' ').trim().slice(0,120));
       }
     } else {
-      log('Cart Widget', 'Route widget present in cart DOM', addedToCart ? 'FAIL' : 'WARN',
-        addedToCart ? 'Widget NOT found after adding product to cart' : 'Cart may be empty — add to cart failed, check manually');
+      log('Widget Confirmation', 'Preferred Checkout widget loads on cart page', 'WARN', 'No product URL found to add to cart');
     }
 
-    const cartText = await page.evaluate(() => document.body.innerText.toLowerCase());
-    const hasRouteText = /route.*(protection|package|shipping)|package.*(protection)|shipping.*protection/i.test(cartText);
-    log('Cart Widget', 'Route product text visible in cart', hasRouteText ? 'PASS' : 'INFO',
-      hasRouteText ? 'Route-related text found in cart' : 'No Route product text detected in cart body');
-
-    // ── Premium Rate Validation ───────────────────────────────────────────
-    try {
-      const cartData = await page.evaluate(async () => {
-        const resp = await fetch('/cart.js');
-        return resp.ok ? resp.json() : null;
-      });
-
-      if (cartData && cartData.total_price != null) {
-        // total_price is in cents — exclude any Route line item itself
-        const nonRouteItems = (cartData.items || []).filter(i => !/route/i.test(i.title + (i.handle || '')));
-
-        // ── Digital item detection ───────────────────────────────────────
-        const digitalItems  = nonRouteItems.filter(i => i.gift_card === true || i.requires_shipping === false);
-        const physicalItems = nonRouteItems.filter(i => i.gift_card !== true && i.requires_shipping !== false);
-        const isAllDigital  = nonRouteItems.length > 0 && digitalItems.length === nonRouteItems.length;
-        const isMixed       = digitalItems.length > 0 && physicalItems.length > 0;
-
-        if (isAllDigital) {
-          log('Cart Widget', 'Cart is digital-only (gift cards / non-shippable items)',
-            !desktopWidget.visible ? 'PASS' : 'FAIL',
-            isAllDigital && !desktopWidget.visible
-              ? `✓ All ${nonRouteItems.length} item(s) are digital — Route widget correctly absent`
-              : `❌ Digital-only cart but Route widget is STILL showing — Route should not protect non-shippable products!`);
-        } else if (isMixed) {
-          log('Cart Widget', 'Cart has mixed physical + digital items', 'INFO',
-            `${physicalItems.length} physical + ${digitalItems.length} digital — Route should show for physical items only`);
-        }
-
-        // ── Premium rate validation (physical items only) ────────────────
-        if (isAllDigital) {
-          log('Cart Widget', 'Premium check skipped — digital-only cart', 'INFO',
-            'No physical items to insure — premium check not applicable');
-        } else {
-          const subtotal = physicalItems.reduce((sum, i) => sum + i.line_price, 0) / 100;
-
-          const expectedRate = subtotal <= RATES.tier1Max ? RATES.tier1Rate : RATES.tier2Rate;
-          const expectedPremium = subtotal * (expectedRate / 100);
-
-          log('Cart Widget', 'Premium check: cart subtotal detected', 'INFO',
-            `Physical subtotal: $${subtotal.toFixed(2)} → Expected premium: $${expectedPremium.toFixed(2)} @ ${expectedRate}%`);
-
-          // Try to parse the premium from the widget text
-          const widgetText = desktopWidget.found ? desktopWidget.text : '';
-          const priceMatch = widgetText.match(/\$\s*(\d+\.\d{2})/);
-
-          if (priceMatch) {
-            const displayedPremium = parseFloat(priceMatch[1]);
-            const diff = Math.abs(displayedPremium - expectedPremium);
-            const isCorrect = diff <= 0.15; // allow $0.15 for rounding differences
-            log('Cart Widget', 'Route premium matches expected rate',
-              isCorrect ? 'PASS' : 'FAIL',
-              `Expected: $${expectedPremium.toFixed(2)} (${expectedRate}% of $${subtotal.toFixed(2)})  |  Widget shows: $${displayedPremium.toFixed(2)}${!isCorrect ? `  ← ⚠️ MISMATCH — Δ$${diff.toFixed(2)}` : ' ✓'}`,
-              subtotal <= RATES.tier1Max ? 'TC-04a' : 'TC-04b');
-          } else if (desktopWidget.found) {
-            log('Cart Widget', 'Route premium detectable in widget text', 'WARN',
-              `Could not parse a price from widget text: "${widgetText.slice(0, 80).replace(/\s+/g, ' ')}"`);
-          } else {
-            log('Cart Widget', 'Route premium check', 'WARN', 'Widget not found — cannot validate premium');
-          }
-        }
-      } else {
-        log('Cart Widget', 'Premium rate check', 'WARN', 'Could not read /cart.js to determine subtotal');
-      }
-    } catch (e) {
-      log('Cart Widget', 'Premium rate check', 'WARN', 'Error during premium check: ' + e.message.split('\n')[0]);
-    }
-
-    // ════════════════════════════════════════════════════════
-    sectionHeader('4 of 11 · Mobile Viewport (375px)');
-    // ════════════════════════════════════════════════════════
-
-    await page.setViewportSize({ width: 375, height: 812 });
-    await safeGoto(cartUrl, 'cart (mobile)');
-    await waitForRouteWidget(page, 4000);
-    await page.waitForTimeout(300);
-
-    const mobileWidget = await findRouteWidget(page);
-    if (mobileWidget.found) {
-      log('Mobile', 'Route widget present at 375px width', 'PASS');
-      log('Mobile', 'Widget visible on mobile', mobileWidget.visible ? 'PASS' : 'FAIL');
-      log('Mobile', 'Widget not overflowing screen width', mobileWidget.right <= 390 ? 'PASS' : 'FAIL',
-        mobileWidget.right > 390 ? `Widget extends to ${Math.round(mobileWidget.right)}px (wider than 375px viewport)` : 'Fits within viewport');
-    } else {
-      log('Mobile', 'Route widget present at 375px width', addedToCart ? 'FAIL' : 'WARN', 'Widget not detected at mobile width');
-    }
-
-    await page.setViewportSize({ width: 768, height: 1024 });
-    await safeGoto(cartUrl, 'cart (tablet)');
-    const tabletWidget = await findRouteWidget(page);
-    log('Mobile', 'Route widget present at 768px (tablet)', tabletWidget.found ? 'PASS' : 'WARN');
-
-    await page.setViewportSize({ width: 1280, height: 800 });
-
-    // ════════════════════════════════════════════════════════
-    sectionHeader('5 of 11 · Collections — Route Product Hidden');
-    // ════════════════════════════════════════════════════════
-
-    const collectionsUrl = new URL('/collections/all?sort_by=price-ascending', BASE_URL).href;
-    try {
-      await safeGoto(collectionsUrl, 'collections');
-      await page.waitForTimeout(500);
-
-      const routeInCollection = await page.evaluate(() => {
-        const productCards = document.querySelectorAll(
-          'a[href*="/products/"], [class*="product-card"], [class*="product-item"], [class*="grid-item"]'
-        );
-        const found = [];
-        for (const card of productCards) {
-          const text = card.textContent || '';
-          const link = card.href || card.querySelector('a[href*="/products/"]')?.href || '';
-          if (/route/i.test(text) && /(protection|package|shipping)/i.test(text)) {
-            found.push({ title: text.trim().slice(0, 60), url: link });
-          }
-        }
-        // Also check plain title elements as fallback
-        if (found.length === 0) {
-          const titleEls = document.querySelectorAll(
-            '.product-item__title, .card__heading, .product-card__title, h3, [class*="product-title"]'
-          );
-          for (const el of titleEls) {
-            const text = el.textContent.trim();
-            if (/route/i.test(text) && /(protection|package|shipping)/i.test(text)) {
-              const link = el.closest('a')?.href || el.querySelector('a')?.href || '';
-              found.push({ title: text.slice(0, 60), url: link });
-            }
-          }
-        }
-        return found;
-      });
-
-      log('Collections', 'Route product NOT visible in /collections/all (price sorted)',
-        routeInCollection.length === 0 ? 'PASS' : 'FAIL',
-        routeInCollection.length > 0
-          ? `⚠️  Route product visible in storefront collection!\n         → Product URL: ${routeInCollection[0].url || '(URL not found)'}\n         → Title: "${routeInCollection[0].title}"`
-          : 'Route product not found in /collections/all — good', 's2-coll');
-
-      // Check product recommendation sections for Route
-      const routeInRecs = await page.evaluate(() => {
-        const recSections = document.querySelectorAll(
-          '[class*="recommendation"], [class*="related"], [class*="suggested"], [class*="upsell"], [id*="recommendation"]'
-        );
-        const found = [];
-        for (const sec of recSections) {
-          const text = sec.textContent || '';
-          if (/route/i.test(text) && /(protection|package|shipping)/i.test(text)) {
-            const link = sec.querySelector('a[href*="/products/"]')?.href || '';
-            found.push({ url: link });
-          }
-        }
-        return found;
-      });
-      log('Collections', 'Route product NOT in recommendation sections',
-        routeInRecs.length === 0 ? 'PASS' : 'FAIL',
-        routeInRecs.length > 0
-          ? `⚠️  Route found in a recommendation widget! URL: ${routeInRecs[0].url || '(check manually)'}`
-          : 'Route not found in recommendation sections on /collections/all');
-      // Also check a product page for Route in recommendations
-      if (productUrl) {
-        await safeGoto(productUrl, 'product page (rec check)');
-        await page.waitForTimeout(1000);
-        const routeInPdpRecs = await page.evaluate(() => {
-          const recSections = document.querySelectorAll(
-            '[class*="recommendation"], [class*="related"], [class*="suggested"], [class*="upsell"], [id*="recommendation"], [class*="recently"]'
-          );
-          const found = [];
-          for (const sec of recSections) {
-            const text = sec.textContent || '';
-            if (/route/i.test(text) && /(protection|package|shipping)/i.test(text)) {
-              const link = sec.querySelector('a[href*="/products/"]')?.href || '';
-              found.push({ url: link });
-            }
-          }
-          return found;
-        });
-        log('Collections', 'Route product NOT in PDP recommendation sections',
-          routeInPdpRecs.length === 0 ? 'PASS' : 'FAIL',
-          routeInPdpRecs.length > 0
-            ? `⚠️  Route found in product page recommendations! URL: ${routeInPdpRecs[0].url || '(check manually)'}`
-            : 'Route not appearing in product page recommendations');
-      }
-
-    } catch (e) {
-      log('Collections', 'Collections page check', 'WARN', '/collections/all returned error: ' + e.message);
-    }
-
-    // ════════════════════════════════════════════════════════
-    sectionHeader('6 of 11 · BFCache / Popstate Handler');
-    // ════════════════════════════════════════════════════════
-    // Validates the Route BFCache handler which:
-    //   • Fires on: pageshow (e.persisted=true) AND popstate (+100ms delay)
-    //   • Acts only when: #cart-drawer.is-open OR URL matches /cart
-    //   • Detects Route item by: item.vendor === "Route"
-    //   • Removes via: POST /cart/update.js  { updates: { [key]: 0 } }
-    //   • Always reloads: whether or not a Route item was found
-
-    await safeGoto(cartUrl, 'cart for BFCache handler checks');
-    await page.waitForTimeout(1500);
-
-    // ── A. Handler Script Installation ───────────────────────────────────────
-    const handlerScriptCheck = await page.evaluate(() => {
-      const inlineScripts = Array.from(document.querySelectorAll('script:not([src])')).map(s => s.textContent);
-      return {
-        hasPageshow:   inlineScripts.some(s => s.includes('pageshow') && s.includes('persisted')),
-        hasPopstate:   inlineScripts.some(s => s.includes('popstate')),
-        hasCartUpdate: inlineScripts.some(s => s.includes('/cart/update.js') || s.includes('cart/update')),
-        hasVendorCheck:inlineScripts.some(s => s.includes('vendor') && s.includes('Route')),
-      };
-    });
-
-    log('BFCache', 'Handler: pageshow + persisted listener installed',
-      handlerScriptCheck.hasPageshow ? 'PASS' : 'FAIL',
-      handlerScriptCheck.hasPageshow
-        ? 'Inline script found with pageshow + e.persisted check ✓'
-        : '❌ No pageshow/persisted handler found — BFCache restore will NOT clean up Route item!');
-
-    log('BFCache', 'Handler: popstate fallback listener installed',
-      handlerScriptCheck.hasPopstate ? 'PASS' : 'WARN',
-      handlerScriptCheck.hasPopstate
-        ? 'popstate listener present — covers browsers that don\'t fire persisted ✓'
-        : 'No popstate handler — back navigation may not trigger cleanup on some browsers');
-
-    log('BFCache', 'Handler: uses /cart/update.js to remove Route item',
-      handlerScriptCheck.hasCartUpdate ? 'PASS' : 'WARN',
-      handlerScriptCheck.hasCartUpdate
-        ? '/cart/update.js call found in handler ✓'
-        : 'Could not confirm /cart/update.js usage — handler may use a different removal method');
-
-    log('BFCache', 'Handler: detects Route item by vendor === "Route"',
-      handlerScriptCheck.hasVendorCheck ? 'PASS' : 'WARN',
-      handlerScriptCheck.hasVendorCheck
-        ? 'vendor:"Route" check found in handler ✓'
-        : 'vendor check not detected — Route item may not be found/removed correctly');
-
-    // ── B. Drawer Selector Validation ────────────────────────────────────────
-    // Handler checks: document.querySelectorAll('#cart-drawer.is-open')
-    // If the merchant's drawer uses a different ID, the drawer-open path never fires.
-    const drawerCheck = await page.evaluate(() => {
-      const byId   = !!document.querySelector('#cart-drawer');
-      // Look for any drawer-like element so we can warn if it has a different ID
-      const anyDrawer = document.querySelector('[id*="cart-drawer"], [class*="cart-drawer"], [id*="cart_drawer"]');
-      return {
-        hasCartDrawerId: byId,
-        actualDrawerId:  anyDrawer ? (anyDrawer.id || anyDrawer.className.split(' ')[0]) : null,
-      };
-    });
-
-    log('BFCache', 'Drawer selector: #cart-drawer exists in DOM',
-      drawerCheck.hasCartDrawerId ? 'PASS' : 'WARN',
-      drawerCheck.hasCartDrawerId
-        ? '#cart-drawer found — handler will correctly detect open drawer state ✓'
-        : drawerCheck.actualDrawerId
-          ? `#cart-drawer NOT found but found "${drawerCheck.actualDrawerId}" — handler\'s drawer trigger won\'t fire on this merchant\'s drawer!`
-          : 'No cart drawer element found — handler drawer-open path will never trigger (cart page path still works)');
-
-    // ── C. Route Vendor Field Verification ───────────────────────────────────
-    // The handler uses item.vendor === "Route" — verify this matches live cart data
-    const routeItemsForVendor = await getRouteLineItems(page);
-    if (routeItemsForVendor.length > 0) {
-      const allVendorMatch = routeItemsForVendor.every(i => i.vendor === 'Route');
-      log('BFCache', 'Route line item vendor field is "Route"',
-        allVendorMatch ? 'PASS' : 'FAIL',
-        allVendorMatch
-          ? `vendor === "Route" confirmed on all ${routeItemsForVendor.length} Route item(s) ✓`
-          : `⚠️ Route item vendor is "${routeItemsForVendor[0].vendor}" — handler will NOT find this item and Route will persist in cart after back navigation!`);
-
-      const keyPresent = routeItemsForVendor.every(i => !!i.key);
-      log('BFCache', 'Route item has a cart key (needed for update.js removal)',
-        keyPresent ? 'PASS' : 'FAIL',
-        keyPresent
-          ? `item.key present: "${routeItemsForVendor[0].key}" — /cart/update.js removal will work ✓`
-          : '❌ Route item missing a cart key — handler cannot construct the updates payload');
-    } else {
-      log('BFCache', 'Route vendor field check', 'WARN',
-        'No Route item in cart right now — vendor field will be verified during the flow test below');
-    }
-
-    // ── D. BFCache Flow: checkout → back → verify cleanup ────────────────────
-    if (addedToCart) {
-      await safeGoto(cartUrl, 'cart (BFCache flow)');
-      await page.waitForTimeout(1000);
-
-      const routeCountBefore = await getRouteLineItemCount(page);
-      log('BFCache', 'Route line item present in cart before checkout',
-        routeCountBefore > 0 ? 'PASS' : 'WARN',
-        routeCountBefore > 0
-          ? `${routeCountBefore} Route item(s) confirmed via /cart.js (vendor check + title fallback)`
-          : 'No Route line item — BFCache flow result may be inconclusive');
-
-      const checkoutSelectors = [
-        '[data-route-checkout]', '[id*="route-checkout"]', '[class*="route-checkout"]',
-        'button[name="checkout"]', 'input[name="checkout"]', '[name="checkout"]',
-        'a[href*="/checkout"]', '.checkout-button', 'button[class*="checkout"]',
-      ];
-      let checkoutBtn = null, usedSel = '';
-      for (const sel of checkoutSelectors) {
-        checkoutBtn = await page.$(sel);
-        if (checkoutBtn) { usedSel = sel; break; }
-      }
-
-      if (checkoutBtn) {
-        log('BFCache', 'Checkout button found', 'INFO', `Selector: "${usedSel}"`);
-        try {
-          await checkoutBtn.scrollIntoViewIfNeeded();
-          await checkoutBtn.click();
-          await page.waitForTimeout(3000);
-
-          const onCheckout = /checkout|checkouts/.test(page.url());
-          if (onCheckout) {
-            log('BFCache', 'Navigated to checkout page', 'PASS', page.url().slice(0, 80));
-
-            // Go back — handler should fire via pageshow (persisted=true) or popstate
-            await page.goBack({ waitUntil: 'domcontentloaded', timeout: 15000 }).catch(() => {});
-            // Wait for handler's reload cycle to complete (handler fires immediately on pageshow)
-            await page.waitForTimeout(5000);
-
-            const routeAfterBack = await getRouteLineItemCount(page);
-            log('BFCache', 'Handler removed Route item after back navigation (pageshow/popstate path)',
-              routeAfterBack === 0 ? 'PASS' : 'FAIL',
-              routeAfterBack === 0
-                ? '✓ Route item correctly removed — handler fired and cleaned up the cart'
-                : `❌ Route item still in cart (${routeAfterBack}) after 5s — handler did not fire or failed to remove item`);
-
-            // ── E. Page Reload Behavior ────────────────────────────────────
-            // Handler always calls window.location.reload() — even if no Route item.
-            // Check: after reload, Route should NOT reappear from BFCache state.
-            await page.reload({ waitUntil: 'domcontentloaded', timeout: 20000 }).catch(() => {});
-
-            const routeAtReload = await getRouteLineItemCount(page);
-            await page.waitForTimeout(3000);
-            const routeAfterWait = await getRouteLineItemCount(page);
-
-            const bfcacheFlicker = routeAtReload > 0 && routeAfterWait === 0;
-            const allClear       = routeAtReload === 0 && routeAfterWait === 0;
-
-            log('BFCache', 'No BFCache state restore after page reload',
-              allClear ? 'PASS' : bfcacheFlicker ? 'FAIL' : 'WARN',
-              bfcacheFlicker
-                ? `❌ Route appeared on reload (${routeAtReload} item) then was removed — BFCache state restored stale cart!`
-                : allClear
-                  ? '✓ Cart clean on reload — no stale BFCache state'
-                  : `Reload count: ${routeAtReload} → after 3s: ${routeAfterWait} — verify manually`);
-
-          } else {
-            log('BFCache', 'Checkout navigation', 'WARN', 'Could not confirm checkout redirect — URL: ' + page.url());
-          }
-        } catch (e) {
-          log('BFCache', 'BFCache flow test', 'WARN', 'Could not complete flow: ' + e.message.split('\n')[0]);
-        }
-      } else {
-        log('BFCache', 'Checkout button found', 'WARN', 'No checkout button — skipping flow test');
-      }
-
-      // ── F. Popstate Path: product page → back → cart (not checkout) ──────
-      // Handler also fires on popstate (not just pageshow), with a 100ms delay.
-      // Test: navigate away from cart, go back, check cleanup fires.
-      try {
-        await safeGoto(cartUrl, 'cart (popstate test setup)');
-        await page.waitForTimeout(1000);
-        // Add Route item back if it was cleaned up
-        if (productUrl) {
-          const countBeforePopstate = await getRouteLineItemCount(page);
-          if (countBeforePopstate === 0) {
-            await safeGoto(productUrl, 'product (popstate re-add)');
-            await clickAddToCart(page);
-            await safeGoto(cartUrl, 'cart (after re-add)');
-            await page.waitForTimeout(1000);
-          }
-        }
-
-        // Navigate forward to homepage, then go back — triggers popstate on cart page
-        await page.goto(BASE_URL, { waitUntil: 'domcontentloaded', timeout: 20000 }).catch(() => {});
-        await page.waitForTimeout(500);
-        await page.goBack({ waitUntil: 'domcontentloaded', timeout: 15000 }).catch(() => {});
-        // Handler has a 100ms delay for popstate — give it time to fire + reload
-        await page.waitForTimeout(4000);
-
-        const onCartAfterPopstate = /\/cart/.test(page.url());
-        if (onCartAfterPopstate) {
-          const routeAfterPopstate = await getRouteLineItemCount(page);
-          log('BFCache', 'Handler fired on popstate (back from non-checkout page)',
-            routeAfterPopstate === 0 ? 'PASS' : 'WARN',
-            routeAfterPopstate === 0
-              ? '✓ popstate path also cleaned up Route item correctly'
-              : `Route still present (${routeAfterPopstate}) after popstate — handler may only trigger on checkout→back path. Verify manually.`);
-        } else {
-          log('BFCache', 'Popstate path test', 'WARN', 'Could not return to cart page via back navigation for popstate test');
-        }
-      } catch (e) {
-        log('BFCache', 'Popstate path test', 'WARN', 'Could not complete: ' + e.message.split('\n')[0]);
-      }
-
-    } else {
-      log('BFCache', 'BFCache flow test (D–F)', 'WARN', 'Skipped — could not add a product to cart automatically');
-    }
-
-    // ════════════════════════════════════════════════════════
-    sectionHeader('7 of 11 · Updates[] — Duplicate Route Products');
-    // ════════════════════════════════════════════════════════
-    // Add qty=3 of a single product → check that only 1 Route item exists in cart & checkout
-
+    // ════════════════════════════════════════════════════════════════════════
+    sectionHeader('2 · TC-01: Route Added via Checkout ⭐');
+    // ════════════════════════════════════════════════════════════════════════
     if (productUrl) {
-      await safeGoto(productUrl, 'product page (qty test)');
-      await page.waitForTimeout(1000);
-
-      // Try to set quantity to 3 via input field
-      let qtySet = false;
-      const qtyInputSelectors = [
-        'input[name="quantity"]',
-        'input[id*="quantity"]',
-        'input[class*="quantity"]',
-        '.quantity__input',
-        '[data-quantity-input]',
-        '[aria-label*="quantity" i]',
-      ];
-
-      for (const sel of qtyInputSelectors) {
-        const qtyInput = await page.$(sel);
-        if (qtyInput) {
-          try {
-            await qtyInput.scrollIntoViewIfNeeded();
-            await qtyInput.click({ clickCount: 3 });
-            await qtyInput.fill('3');
-            await qtyInput.press('Tab');
-            await page.waitForTimeout(500);
-            qtySet = true;
-            log('Updates[] Check', 'Set product quantity to 3 via input', 'PASS');
-            break;
-          } catch (_) {}
-        }
-      }
-
-      // If no input, try clicking the + increment button twice
-      if (!qtySet) {
-        const plusSelectors = [
-          '[data-quantity-plus]',
-          'button[aria-label*="ncrease" i]',
-          'button[aria-label*="plus" i]',
-          '.quantity__button + .quantity__button',
-          '[class*="quantity"] button:last-child',
-          '[class*="qty"] button:last-child',
-        ];
-        for (const sel of plusSelectors) {
-          const plusBtn = await page.$(sel);
-          if (plusBtn) {
-            try {
-              await plusBtn.click(); await page.waitForTimeout(300);
-              await plusBtn.click(); await page.waitForTimeout(300);
-              qtySet = true;
-              log('Updates[] Check', 'Increased quantity to 3 via + button', 'PASS');
-              break;
-            } catch (_) {}
-          }
-        }
-      }
-
-      if (!qtySet) {
-        log('Updates[] Check', 'Set quantity to 3', 'WARN', 'Could not find a quantity control — adding at qty 1 and checking for duplicates');
-      }
-
-      // Add to cart with qty=3
-      const addedQty = await clickAddToCart(page);
-      if (addedQty) {
-        log('Updates[] Check', 'Added product (qty 3) to cart', 'PASS');
+      await clearCart();
+      await safeGoto(productUrl, 'product page (TC-01)');
+      const added = await clickAddToCart(page);
+      if (!added) {
+        log('TC-01 Route Added via Checkout', 'Add to Cart succeeded', 'WARN', 'Could not click Add to Cart — test skipped');
       } else {
-        log('Updates[] Check', 'Add to cart for qty test', 'WARN', 'Could not add product');
-      }
-
-      // Check cart via /cart.js for duplicate Route items
-      await safeGoto(cartUrl, 'cart (qty check)');
-      await page.waitForTimeout(1500);
-
-      const routeCountInCart = await getRouteLineItemCount(page);
-      if (routeCountInCart >= 0) {
-        log('Updates[] Check', 'Only 1 Route line item in cart with qty=3 product (no duplicates)',
-          routeCountInCart === 1 ? 'PASS' : routeCountInCart === 0 ? 'WARN' : 'FAIL',
-          routeCountInCart > 1
-            ? `❌ ${routeCountInCart} Route items found in cart — duplicate Route products (Updates[] issue)!`
-            : routeCountInCart === 1
-              ? '1 Route line item — correct, no duplicates'
-              : 'No Route line items found in cart — check manually');
-      } else {
-        log('Updates[] Check', 'Route line item count check', 'WARN', 'Could not read /cart.js');
-      }
-
-      // Now go to checkout and verify no duplicates there either
-      const checkoutSelectors = [
-        'button[name="checkout"]', 'input[name="checkout"]', '[name="checkout"]',
-        'a[href*="/checkout"]', '.checkout-button', 'button[class*="checkout"]',
-      ];
-      let checkoutBtn2 = null;
-      for (const sel of checkoutSelectors) {
-        checkoutBtn2 = await page.$(sel);
-        if (checkoutBtn2) break;
-      }
-
-      if (checkoutBtn2) {
-        try {
-          await checkoutBtn2.scrollIntoViewIfNeeded();
-          await checkoutBtn2.click();
-          await page.waitForTimeout(3000);
-
-          const onCheckout = /checkout|checkouts/.test(page.url());
-          if (onCheckout) {
-            // Count Route line items visible in the checkout page DOM
-            const routeOnCheckout = await page.evaluate(() => {
-              const allText = Array.from(document.querySelectorAll('[class*="product"], [class*="line-item"], [class*="order-summary"] *'))
-                .map(el => el.textContent.trim())
-                .filter(t => /route/i.test(t) && /(protection|package)/i.test(t));
-              // Deduplicate and count distinct Route product rows
-              return [...new Set(allText)].length;
-            });
-
-            log('Updates[] Check', 'No duplicate Route items on Checkout page',
-              routeOnCheckout <= 1 ? 'PASS' : 'FAIL',
-              routeOnCheckout > 1
-                ? `❌ ${routeOnCheckout} Route-related entries on checkout page — possible duplicate!`
-                : 'Checkout page shows at most 1 Route item ✓');
-
-            // Go back to cart for next tests
-            await page.goBack({ waitUntil: 'domcontentloaded', timeout: 10000 }).catch(() => {});
-            await page.waitForTimeout(1000);
-          } else {
-            log('Updates[] Check', 'Checkout page check', 'WARN', 'Could not navigate to checkout for final duplicate check');
-          }
-        } catch (e) {
-          log('Updates[] Check', 'Checkout duplicate check', 'WARN', e.message.split('\n')[0]);
-        }
-      } else {
-        log('Updates[] Check', 'Checkout duplicate check', 'WARN', 'No checkout button found — skipping checkout duplicate check');
-      }
-    } else {
-      log('Updates[] Check', 'Updates[] / Duplicate Route products test', 'WARN', 'Skipped — no product URL found');
-    }
-
-    // ════════════════════════════════════════════════════════
-    sectionHeader('8 of 11 · Console Errors');
-    // ════════════════════════════════════════════════════════
-
-    const routeConsoleErrors = consoleErrors.filter(m => /route/i.test(m));
-    const allErrors = consoleErrors.length;
-
-    log('Console', 'No Route-related JS errors', routeConsoleErrors.length === 0 ? 'PASS' : 'FAIL',
-      routeConsoleErrors.length > 0 ? routeConsoleErrors.slice(0, 3).join(' | ') : 'Clean');
-    log('Console', `Total JS errors on page (${allErrors})`, allErrors === 0 ? 'PASS' : allErrors < 5 ? 'WARN' : 'FAIL',
-      allErrors > 0 ? `${allErrors} error(s) — may or may not be Route-related` : 'No errors');
-
-    // ════════════════════════════════════════════════════════
-    sectionHeader('9 of 11 · Network Requests to Route');
-    // ════════════════════════════════════════════════════════
-
-    if (routeNetworkCalls.length > 0) {
-      const failed = routeNetworkCalls.filter(r => r.status && r.status >= 400);
-      log('Network', `Route API calls detected (${routeNetworkCalls.length} total)`, 'PASS',
-        routeNetworkCalls.slice(0, 2).map(r => `[${r.status || '?'}] ${r.url.slice(0, 80)}`).join('\n         → '));
-      log('Network', 'All Route API calls successful', failed.length === 0 ? 'PASS' : 'FAIL',
-        failed.length > 0 ? failed.map(r => `[${r.status}] ${r.url.slice(0, 80)}`).join(' | ') : `${routeNetworkCalls.length} calls, all OK`);
-    } else {
-      log('Network', 'Route API calls detected', 'WARN', 'No calls to route.com observed — script may not have loaded or triggered');
-    }
-
-    // ════════════════════════════════════════════════════════
-    sectionHeader('10 of 11 · Coverage Limit — Widget Hides Above $' + RATES.coverageLimit);
-    // ════════════════════════════════════════════════════════
-    // Goal: push cart total above the coverage limit and verify the Route widget disappears
-
-    if (productUrl) {
-      // First read the product price from /cart.js to calculate required qty
-      await safeGoto(cartUrl, 'cart (coverage-limit setup)');
-      await page.waitForTimeout(1000);
-
-      const cartForLimit = await page.evaluate(async () => {
-        const resp = await fetch('/cart.js');
-        return resp.ok ? resp.json() : null;
-      });
-
-      if (cartForLimit) {
-        const nonRouteItems = (cartForLimit.items || []).filter(i => !/route/i.test(i.title + (i.handle || '')));
-        const currentSubtotal = nonRouteItems.reduce((sum, i) => sum + i.line_price, 0) / 100;
-        const unitPrice = nonRouteItems[0] ? nonRouteItems[0].price / 100 : 0;
-        const currentQty = nonRouteItems[0] ? nonRouteItems[0].quantity : 0;
-
-        if (currentSubtotal >= RATES.coverageLimit) {
-          // Already over the limit — just check if widget is hidden
-          const widgetAtLimit = await findRouteWidget(page);
-          log('Coverage Limit', `Widget hidden when cart > $${RATES.coverageLimit}`,
-            !widgetAtLimit.visible ? 'PASS' : 'FAIL',
-            `Cart subtotal: $${currentSubtotal.toFixed(2)} — widget is ${widgetAtLimit.visible ? 'STILL VISIBLE ← bug!' : 'correctly hidden ✓'}`);
-
-        } else if (unitPrice > 0) {
-          const qtyNeeded = Math.ceil(RATES.coverageLimit / unitPrice) + 1;
-          const qtyToAdd = qtyNeeded - currentQty;
-
-          log('Coverage Limit', 'Calculating qty needed to exceed coverage limit', 'INFO',
-            `Unit price: $${unitPrice.toFixed(2)} | Current qty: ${currentQty} | Need qty: ${qtyNeeded} (+${qtyToAdd} more)`);
-
-          if (qtyToAdd > 0 && qtyToAdd <= 300) {
-            // Navigate to product and set qty to the needed total
-            await safeGoto(productUrl, 'product page (coverage limit)');
-            await page.waitForTimeout(1000);
-
-            let qtySet = false;
-            for (const sel of ['input[name="quantity"]', 'input[id*="quantity"]', 'input[class*="quantity"]', '.quantity__input']) {
-              const inp = await page.$(sel);
-              if (inp) {
-                try {
-                  await inp.scrollIntoViewIfNeeded();
-                  await inp.click({ clickCount: 3 });
-                  await inp.fill(String(qtyToAdd));
-                  await inp.press('Tab');
-                  await page.waitForTimeout(400);
-                  qtySet = true;
-                  break;
-                } catch (_) {}
-              }
-            }
-
-            const addedForLimit = await clickAddToCart(page);
-            if (addedForLimit) {
-              await safeGoto(cartUrl, 'cart (after coverage limit add)');
-              await waitForRouteWidget(page, 4000);
-              await page.waitForTimeout(500);
-
-              const cartAfterLimit = await page.evaluate(async () => {
-                const resp = await fetch('/cart.js');
-                return resp.ok ? resp.json() : null;
-              });
-              const newNonRoute = (cartAfterLimit?.items || []).filter(i => !/route/i.test(i.title + (i.handle || '')));
-              const newSubtotal = newNonRoute.reduce((sum, i) => sum + i.line_price, 0) / 100;
-
-              if (newSubtotal >= RATES.coverageLimit) {
-                const widgetAtLimit = await findRouteWidget(page);
-                log('Coverage Limit', `Widget hidden when cart subtotal > $${RATES.coverageLimit}`,
-                  !widgetAtLimit.visible ? 'PASS' : 'FAIL',
-                  `Cart subtotal: $${newSubtotal.toFixed(2)} (above $${RATES.coverageLimit}) — widget ${widgetAtLimit.visible ? 'is STILL VISIBLE ← bug!' : 'correctly hidden ✓'}`);
-              } else {
-                log('Coverage Limit', 'Coverage limit test', 'WARN',
-                  `Couldn't push cart above $${RATES.coverageLimit} (reached $${newSubtotal.toFixed(2)}). Test manually by adding more items.`);
-              }
-            } else {
-              log('Coverage Limit', 'Coverage limit test', 'WARN',
-                `Could not add extra qty to cart. Verify manually that widget hides above $${RATES.coverageLimit}.`);
-            }
-          } else {
-            log('Coverage Limit', 'Coverage limit test', 'WARN',
-              `Product price $${unitPrice.toFixed(2)} would need qty ${qtyNeeded} to exceed $${RATES.coverageLimit} — too many to add automatically. Test manually.`);
-          }
-        } else {
-          log('Coverage Limit', 'Coverage limit test', 'WARN', 'No non-Route items in cart to calculate unit price. Test manually.');
-        }
-      } else {
-        log('Coverage Limit', 'Coverage limit test', 'WARN', 'Could not read cart data for coverage limit check.');
-      }
-    } else {
-      log('Coverage Limit', 'Coverage limit test', 'WARN', 'Skipped — no product URL found.');
-    }
-
-    // ════════════════════════════════════════════════════════
-    sectionHeader('11 of 11 · Digital Items — Gift Cards & Non-Shippable Products');
-    // ════════════════════════════════════════════════════════
-    // Route should NOT show a widget when cart contains only digital / non-shippable items.
-
-    let giftCardVariantId = null;
-    let giftCardTitle     = '';
-
-    // 1. Try /products.json to find any gift_card type product
-    try {
-      const gcSearchUrls = [
-        '/products.json?product_type=gift+card&limit=5',
-        '/products.json?product_type=Gift+Card&limit=5',
-        '/products.json?q=gift+card&limit=10',
-      ];
-      for (const path of gcSearchUrls) {
-        const gcData = await page.evaluate(async (p) => {
-          const resp = await fetch(p);
-          return resp.ok ? resp.json() : null;
-        }, path);
-        const gcProduct = (gcData?.products || []).find(p => p.variants?.some(v => v.requires_shipping === false) || /gift.?card/i.test(p.product_type + ' ' + p.title));
-        if (gcProduct) {
-          giftCardVariantId = gcProduct.variants[0]?.id;
-          giftCardTitle     = gcProduct.title;
-          break;
-        }
-      }
-    } catch (_) {}
-
-    // 2. Fallback: try known Shopify gift-card slug directly
-    if (!giftCardVariantId) {
-      const gcSlugs = ['/products/gift-card', '/products/gift_card', '/products/e-gift-card', '/products/digital-gift-card', '/products/egift-card'];
-      for (const slug of gcSlugs) {
-        const loaded = await safeGoto(new URL(slug, BASE_URL).href, 'gift card page');
-        if (loaded && !page.url().includes('/404') && !page.url().includes('collections')) {
-          const vid = await page.evaluate(() => {
-            const el = document.querySelector('[name="id"], [data-variant-id], input[type="hidden"][name="id"]');
-            return el ? el.value || el.dataset.variantId : null;
-          });
-          if (vid) {
-            giftCardVariantId = vid;
-            giftCardTitle = await page.evaluate(() => document.querySelector('h1')?.innerText || 'Gift Card');
-            break;
-          }
-        }
-      }
-    }
-
-    if (giftCardVariantId) {
-      log('Digital Items', 'Gift card / digital product found on site', 'INFO', `"${giftCardTitle}" (variant ${giftCardVariantId})`);
-
-      // Clear cart and add ONLY the gift card
-      await page.evaluate(async () => {
-        await fetch('/cart/clear.js', { method: 'POST' });
-      });
-      await page.waitForTimeout(500);
-      await page.evaluate(async (vid) => {
-        await fetch('/cart/add.js', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ id: Number(vid), quantity: 1 }),
-        });
-      }, String(giftCardVariantId));
-      await page.waitForTimeout(500);
-
-      await safeGoto(cartUrl, 'cart (gift card only)');
-      await waitForRouteWidget(page, 4000); // wait to see if widget appears (it shouldn't)
-      await page.waitForTimeout(500);
-
-      // Verify what's in the cart
-      const gcCartData = await page.evaluate(async () => {
-        const resp = await fetch('/cart.js');
-        return resp.ok ? resp.json() : null;
-      });
-
-      const gcItems       = (gcCartData?.items || []).filter(i => !/route/i.test(i.title + (i.handle || '')));
-      const isDigitalCart = gcItems.length > 0 && gcItems.every(i => i.gift_card === true || i.requires_shipping === false);
-
-      if (isDigitalCart) {
-        log('Digital Items', 'Cart contains only digital/gift-card items', 'INFO',
-          gcItems.map(i => `"${i.title}" — gift_card:${i.gift_card}, requires_shipping:${i.requires_shipping}`).join('; '));
-
-        const gcWidget = await findRouteWidget(page);
-        log('Digital Items', 'Route widget correctly absent for digital-only cart',
-          !gcWidget.visible ? 'PASS' : 'FAIL',
-          !gcWidget.visible
-            ? '✓ Widget hidden — Route correctly does not protect digital/non-shippable items'
-            : '❌ Route widget is VISIBLE on a digital-only cart — Route should not show for non-shippable products!');
-      } else {
-        log('Digital Items', 'Gift card item classification check', 'WARN',
-          gcItems.length > 0
-            ? `Item "${gcItems[0]?.title}" has requires_shipping:${gcItems[0]?.requires_shipping}, gift_card:${gcItems[0]?.gift_card} — may be treated as physical`
-            : 'Cart appears empty after adding gift card — Shopify may require special gift card handling');
-        log('Digital Items', 'Verify manually', 'WARN', 'Add a gift card to the cart and confirm Route widget does not appear');
-      }
-
-      // Restore cart with a physical product so later sections still work
-      await page.evaluate(async () => { await fetch('/cart/clear.js', { method: 'POST' }); });
-      if (productUrl) {
-        await safeGoto(productUrl, 'product (restore after digital test)');
+        await safeGoto(cartUrl, 'cart (TC-01)');
+        await waitForRouteWidget(page, 5000);
         await page.waitForTimeout(500);
-        await clickAddToCart(page);
-        log('Digital Items', 'Cart restored with physical product for any remaining checks', 'INFO');
-      }
 
+        // Verify Route IS in cart before checkout
+        const routeInCartBefore = await getRouteLineItemCount(page);
+        log('TC-01 Route Added via Checkout', 'Route product present in cart before checkout',
+          routeInCartBefore > 0 ? 'PASS' : 'WARN',
+          routeInCartBefore > 0 ? `${routeInCartBefore} Route item(s) in cart` : 'Route widget found but not in cart.js line items yet');
+
+        // Click Checkout button
+        const checkoutClicked = await clickCheckout();
+        if (!checkoutClicked) {
+          log('TC-01 Route Added via Checkout', 'Checkout button found and clicked', 'WARN', 'Could not find Checkout button');
+        } else {
+          await page.waitForTimeout(4000);
+          const onCheckout = /checkout|checkouts/i.test(page.url());
+
+          if (onCheckout) {
+            log('TC-01 Route Added via Checkout', 'Successfully navigated to checkout page', 'PASS', page.url().slice(0,80));
+            await page.waitForTimeout(2000); // let checkout page render
+
+            // Count Route items at checkout
+            const routeAtCheckout = await getRouteCountAtCheckout();
+            log('TC-01 Route Added via Checkout', 'Route product is present at checkout',
+              routeAtCheckout > 0 ? 'PASS' : 'FAIL',
+              routeAtCheckout > 0 ? `${routeAtCheckout} Route item(s) visible in checkout order summary` : 'Route product NOT found in checkout order summary',
+              'TC-01');
+            log('TC-01 Route Added via Checkout', 'Only ONE Route product at checkout (no duplicates)',
+              routeAtCheckout === 1 ? 'PASS' : routeAtCheckout === 0 ? 'FAIL' : 'FAIL',
+              routeAtCheckout > 1 ? `${routeAtCheckout} Route items found — duplicates detected!` :
+              routeAtCheckout === 0 ? 'Route not found at checkout' : 'Exactly 1 Route item — correct',
+              'TC-01');
+          } else {
+            log('TC-01 Route Added via Checkout', 'Navigated to checkout page', 'WARN',
+              `Did not reach checkout — current URL: ${page.url().slice(0,80)}`);
+          }
+        }
+      }
     } else {
-      log('Digital Items', 'Gift card / digital product found on site', 'WARN',
-        'No gift card or digital product found automatically on this store.');
-      log('Digital Items', 'Manual verification needed', 'WARN',
-        'Add a gift card or non-shippable product to the cart and confirm: (1) Route widget does NOT appear, (2) Route is not added as a line item.');
+      log('TC-01 Route Added via Checkout', 'Route added at checkout', 'WARN', 'No product URL found');
     }
 
-    // ════════════════════════════════════════════════════════
-    sectionHeader('12 of 12 · Value Prop, Info Modal & Design Checks');
-    // ════════════════════════════════════════════════════════
-
-    try {
-      await safeGoto(cartUrl, 'cart (value prop checks)');
+    // ════════════════════════════════════════════════════════════════════════
+    sectionHeader('3 · TC-02: Route Removed via CWC');
+    // ════════════════════════════════════════════════════════════════════════
+    if (productUrl) {
+      await clearCart();
+      await safeGoto(productUrl, 'product page (TC-02)');
+      await clickAddToCart(page);
+      await safeGoto(cartUrl, 'cart (TC-02)');
       await waitForRouteWidget(page, 5000);
       await page.waitForTimeout(500);
 
-      // ── Value prop wording ────────────────────────────────────────────────
-      const widgetText = await page.evaluate(() => {
-        const selectors = ['#route-widget','.route-widget','[id*="route-widget"]','[class*="route-widget"]','route-widget'];
-        for (const sel of selectors) {
-          const el = document.querySelector(sel);
-          if (el) return el.innerText || '';
-        }
-        return '';
-      });
-      const hasPremiumText = /order protected for \$[\d.]+/i.test(widgetText);
-      log('Value Prop', 'Widget shows "Order protected for $[amount]"',
-        hasPremiumText ? 'PASS' : 'WARN',
-        hasPremiumText ? `Text found: "${widgetText.slice(0,80).replace(/\s+/g,' ')}"` : 'Could not detect "Order protected for $X" in widget text',
-        'm-valuprop-wording');
-
-      // ── Info icon hover tooltip ───────────────────────────────────────────
-      const infoIcon = await page.$('[id*="route"] [data-tippy], [id*="route"] .tippy, [id*="route"] button[aria-label*="info"], [id*="route"] button[title*="info"], [id*="route"] [class*="info"], [class*="route"] [class*="info-icon"], [class*="route"] button[type="button"]');
-      if (infoIcon) {
-        await infoIcon.hover();
-        await page.waitForTimeout(800);
-        const tooltipText = await page.evaluate(() => {
-          const t = document.querySelector('[data-tippy-content], .tippy-content, [role="tooltip"], [class*="tooltip"]');
-          return t ? t.innerText || t.textContent : '';
-        });
-        const hasTooltip = tooltipText.length > 0;
-        log('Value Prop', 'Info icon hover tooltip appears',
-          hasTooltip ? 'PASS' : 'WARN',
-          hasTooltip ? `Tooltip text: "${tooltipText.slice(0,80).replace(/\s+/g,' ')}"` : 'Could not detect tooltip on hover — verify manually',
-          'm-valuprop-hover');
+      const cwcClicked = await clickCWC();
+      if (!cwcClicked) {
+        log('TC-02 Route Removed via CWC', 'CWC link found and clicked', 'WARN', '"Checkout Without Coverage" link not found — verify manually');
       } else {
-        log('Value Prop', 'Info icon hover tooltip', 'WARN', 'Info icon not found — verify hover tooltip manually', 'm-valuprop-hover');
+        await page.waitForTimeout(4000);
+        const onCheckout = /checkout|checkouts/i.test(page.url());
+        if (onCheckout) {
+          await page.waitForTimeout(2000);
+          const routeAtCheckout = await getRouteCountAtCheckout();
+          log('TC-02 Route Removed via CWC', 'Route product NOT present at checkout after CWC',
+            routeAtCheckout === 0 ? 'PASS' : 'FAIL',
+            routeAtCheckout === 0 ? 'Route correctly absent at checkout after CWC click' :
+            `Route still present (${routeAtCheckout} item(s)) after clicking CWC`,
+            'TC-02');
+        } else {
+          // CWC may clear cart and redirect — check cart.js
+          await safeGoto(cartUrl, 'cart after CWC');
+          const routeCount = await getRouteLineItemCount(page);
+          log('TC-02 Route Removed via CWC', 'Route product removed from cart after CWC',
+            routeCount === 0 ? 'PASS' : 'FAIL',
+            routeCount === 0 ? 'Route correctly removed after CWC' : `Route still in cart (${routeCount} items)`,
+            'TC-02');
+        }
       }
+    } else {
+      log('TC-02 Route Removed via CWC', 'Route removed via CWC', 'WARN', 'No product URL found');
+    }
 
-      // ── Mobile alignment ──────────────────────────────────────────────────
-      await page.setViewportSize({ width: 375, height: 812 });
-      await safeGoto(cartUrl, 'cart (mobile design check)');
+    // ════════════════════════════════════════════════════════════════════════
+    sectionHeader('4 · TC-03: Premium Calculation');
+    // ════════════════════════════════════════════════════════════════════════
+    if (productUrl) {
+      await clearCart();
+      await safeGoto(productUrl, 'product page (premium)');
+      await clickAddToCart(page);
+      await safeGoto(cartUrl, 'cart (premium)');
+      await waitForRouteWidget(page, 5000);
+      await page.waitForTimeout(500);
+
+      try {
+        const cartData = await page.evaluate(async () => {
+          const r = await fetch('/cart.js');
+          return r.ok ? r.json() : null;
+        });
+
+        if (cartData && cartData.total_price != null) {
+          const nonRoute = (cartData.items||[]).filter(i => !/route/i.test(i.title+(i.handle||'')));
+          const physical = nonRoute.filter(i => i.gift_card !== true && i.requires_shipping !== false);
+          const subtotal = physical.reduce((s,i) => s + i.line_price, 0) / 100;
+
+          const tier1Max   = RATES.tier1Max || 100;
+          const tier1Rate  = RATES.tier1Rate || 1.95;
+          const tier2Rate  = RATES.tier2Rate || 2.5;
+          const tier1Fmt   = RATES.tier1Format || 'pct';
+
+          const inLower = subtotal <= tier1Max;
+          const rate    = inLower ? tier1Rate : tier2Rate;
+          const fmt     = inLower ? tier1Fmt : (RATES.tier2Format || 'pct');
+
+          const expectedPremium = fmt === 'flat' ? rate : subtotal * (rate / 100);
+
+          log('TC-03 Premium Calculation', `Cart subtotal: $${subtotal.toFixed(2)} (tier: ${inLower ? 'lower' : 'upper'})`, 'INFO',
+            `Expected premium: $${expectedPremium.toFixed(2)} @ ${fmt === 'flat' ? '$'+rate : rate+'%'}`);
+
+          const widget = await findRouteWidget(page);
+          const priceMatch = widget.text?.match(/\$\s*([\d.]+)/);
+          if (priceMatch) {
+            const shown = parseFloat(priceMatch[1]);
+            const diff  = Math.abs(shown - expectedPremium);
+            const ok    = diff <= 0.15;
+            log('TC-03 Premium Calculation', `Premium correct for $${subtotal.toFixed(2)} subtotal`,
+              ok ? 'PASS' : 'FAIL',
+              `Expected: $${expectedPremium.toFixed(2)} | Shown: $${shown.toFixed(2)}${!ok ? ' ← MISMATCH' : ''}`,
+              'TC-03a');
+          } else {
+            log('TC-03 Premium Calculation', 'Premium amount readable in widget', 'WARN',
+              `Could not parse $ amount from widget text: "${widget.text?.slice(0,60).replace(/\s+/g,' ')}"`);
+          }
+        } else {
+          log('TC-03 Premium Calculation', 'Premium calculation', 'WARN', 'Could not read /cart.js for subtotal');
+        }
+      } catch(e) {
+        log('TC-03 Premium Calculation', 'Premium calculation', 'WARN', e.message.split('\n')[0]);
+      }
+    } else {
+      log('TC-03 Premium Calculation', 'Premium calculation', 'WARN', 'No product URL found');
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    sectionHeader('5 · TC-04: Widget Disappears Above Threshold');
+    // ════════════════════════════════════════════════════════════════════════
+    {
+      const coverageLimit = RATES.coverageLimit || 5000;
+      await clearCart();
+      await safeGoto(cartUrl, 'cart (coverage limit)');
       await waitForRouteWidget(page, 4000);
-      const mobileDesign = await page.evaluate(() => {
-        const selectors = ['#route-widget','.route-widget','[id*="route-widget"]','[class*="route-widget"]'];
-        for (const sel of selectors) {
-          const el = document.querySelector(sel);
-          if (el) {
-            const rect = el.getBoundingClientRect();
-            const style = window.getComputedStyle(el);
-            const overflows = rect.right > window.innerWidth + 5;
-            const centered = Math.abs((rect.left + rect.right) / 2 - window.innerWidth / 2) < 40;
-            return { found: true, overflows, centered, right: Math.round(rect.right), width: Math.round(rect.width) };
+      const widgetBelow = await findRouteWidget(page);
+
+      if (!widgetBelow.found) {
+        log('TC-04 Widget Disappears Above Threshold', 'Widget present below coverage limit', 'WARN', 'No product in cart to test widget visibility');
+      } else {
+        // Try to add enough quantity to exceed limit
+        if (productUrl) {
+          await clearCart();
+          await safeGoto(productUrl, 'product (coverage limit)');
+          await clickAddToCart(page);
+          const cartD = await page.evaluate(async () => { const r = await fetch('/cart.js'); return r.ok ? r.json() : null; });
+          if (cartD && cartD.total_price) {
+            const subtotal = cartD.total_price / 100;
+            const unitPrice = (cartD.items||[]).filter(i=>!/route/i.test(i.title)).reduce((s,i)=>s+i.price,0)/100;
+            if (unitPrice > 0 && subtotal < coverageLimit) {
+              const qtyNeeded = Math.ceil((coverageLimit - subtotal) / unitPrice) + 1;
+              const inp = await page.$('input[name="updates[]"], input[class*="quantity"], input[type="number"]');
+              if (inp) {
+                await inp.fill(String(Math.min(qtyNeeded + 1, 50)));
+                await inp.press('Enter');
+                await page.waitForTimeout(1000);
+              }
+            }
+            await safeGoto(cartUrl, 'cart (above limit)');
+            await waitForRouteWidget(page, 4000);
+            const widgetAbove = await findRouteWidget(page);
+            const newCart = await page.evaluate(async () => { const r = await fetch('/cart.js'); return r.ok ? r.json() : null; });
+            const newSubtotal = (newCart?.total_price||0) / 100;
+            if (newSubtotal > coverageLimit) {
+              log('TC-04 Widget Disappears Above Threshold',
+                `Widget hidden when cart > $${coverageLimit.toLocaleString()}`,
+                !widgetAbove.visible ? 'PASS' : 'FAIL',
+                `Cart subtotal: $${newSubtotal.toFixed(2)} | Widget ${widgetAbove.visible ? 'STILL VISIBLE — issue!' : 'correctly hidden'}`,
+                'TC-04');
+            } else {
+              log('TC-04 Widget Disappears Above Threshold', 'Coverage limit test', 'WARN',
+                `Could not exceed $${coverageLimit} limit (product unit price too low or qty limit reached)`);
+            }
           }
         }
-        return { found: false };
-      });
-      if (mobileDesign.found) {
-        log('Design', 'Widget not overflowing mobile viewport (375px)',
-          mobileDesign.overflows ? 'FAIL' : 'PASS',
-          mobileDesign.overflows ? `Widget extends to ${mobileDesign.right}px (wider than 375px viewport)` : `Widget width: ${mobileDesign.width}px — fits within viewport`,
-          'm-d-align');
+      }
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    sectionHeader('6 · TC-05: Multi Route Checkout');
+    // ════════════════════════════════════════════════════════════════════════
+    if (productUrl) {
+      // 6a: single product
+      await clearCart();
+      await safeGoto(productUrl, 'product (TC-05a)');
+      await clickAddToCart(page);
+      await safeGoto(cartUrl, 'cart (TC-05a)');
+      await waitForRouteWidget(page, 4000);
+      const clicked5a = await clickCheckout();
+      if (clicked5a) {
+        await page.waitForTimeout(4000);
+        if (/checkout|checkouts/i.test(page.url())) {
+          await page.waitForTimeout(1500);
+          const r5a = await getRouteCountAtCheckout();
+          log('TC-05 Multi Route Checkout', 'Single product → only 1 Route at checkout',
+            r5a === 1 ? 'PASS' : 'FAIL',
+            `${r5a} Route item(s) at checkout`, 'TC-05a');
+        } else {
+          log('TC-05 Multi Route Checkout', 'Single product → checkout navigation', 'WARN', 'Did not reach checkout page');
+        }
       } else {
-        log('Design', 'Widget alignment on mobile', 'WARN', 'Widget not found at 375px — verify manually', 'm-d-align');
+        log('TC-05 Multi Route Checkout', 'Single product checkout', 'WARN', 'Checkout button not found');
       }
 
-      // ── Reset viewport ────────────────────────────────────────────────────
-      await page.setViewportSize({ width: 1280, height: 800 });
+      // 6b: multiple products
+      if (productUrl2) {
+        await clearCart();
+        await safeGoto(productUrl, 'product 1 (TC-05b)');
+        await clickAddToCart(page);
+        await safeGoto(productUrl2, 'product 2 (TC-05b)');
+        await clickAddToCart(page);
+        await safeGoto(cartUrl, 'cart (TC-05b)');
+        await waitForRouteWidget(page, 4000);
+        const clicked5b = await clickCheckout();
+        if (clicked5b) {
+          await page.waitForTimeout(4000);
+          if (/checkout|checkouts/i.test(page.url())) {
+            await page.waitForTimeout(1500);
+            const r5b = await getRouteCountAtCheckout();
+            log('TC-05 Multi Route Checkout', 'Multiple products → only 1 Route at checkout',
+              r5b === 1 ? 'PASS' : 'FAIL',
+              `${r5b} Route item(s) at checkout with multiple products`, 'TC-05b');
+          }
+        }
+      } else {
+        log('TC-05 Multi Route Checkout', 'Multiple products test', 'WARN', 'Only one product URL found — skipped');
+      }
+    } else {
+      log('TC-05 Multi Route Checkout', 'Multi route checkout', 'WARN', 'No product URL found');
+    }
 
-    } catch(e) {
-      log('Value Prop', 'Value prop & design checks', 'WARN', 'Could not complete: ' + e.message.split('\n')[0]);
+    // ════════════════════════════════════════════════════════════════════════
+    sectionHeader('7 · TC-06: Updates[] / Quantity Change Checks');
+    // ════════════════════════════════════════════════════════════════════════
+    if (productUrl) {
+      // 7a: single product qty 1→3
+      await clearCart();
+      await safeGoto(productUrl, 'product (TC-06a)');
+      await clickAddToCart(page);
+      await safeGoto(cartUrl, 'cart (TC-06a)');
+      await waitForRouteWidget(page, 4000);
+      // Increase qty to 3
+      const inp6a = await page.$('input[name="updates[]"], input[class*="quantity"], input[type="number"][min]');
+      if (inp6a) {
+        await inp6a.fill('3');
+        await inp6a.press('Enter');
+        await page.waitForTimeout(1000);
+        await waitForRouteWidget(page, 3000);
+      }
+      const clicked6a = await clickCheckout();
+      if (clicked6a) {
+        await page.waitForTimeout(4000);
+        if (/checkout|checkouts/i.test(page.url())) {
+          await page.waitForTimeout(1500);
+          const r6a = await getRouteCountAtCheckout();
+          log('TC-06 Updates[] Checks', 'Single product qty 3 → only 1 Route at checkout',
+            r6a === 1 ? 'PASS' : 'FAIL',
+            `${r6a} Route item(s) at checkout (qty=3)`, 'TC-06a');
+        }
+      } else {
+        // Fallback: check via /cart.js
+        const rc = await getRouteLineItemCount(page);
+        log('TC-06 Updates[] Checks', 'Single product qty 3 → Route count in cart',
+          rc === 1 ? 'PASS' : 'FAIL',
+          `${rc} Route item(s) in /cart.js (qty=3)`, 'TC-06a');
+      }
+
+      // 7b: multiple products, qty increase
+      if (productUrl2) {
+        await clearCart();
+        await safeGoto(productUrl, 'product 1 (TC-06b)');
+        await clickAddToCart(page);
+        await safeGoto(productUrl2, 'product 2 (TC-06b)');
+        await clickAddToCart(page);
+        await safeGoto(cartUrl, 'cart (TC-06b)');
+        await waitForRouteWidget(page, 4000);
+        const inp6b = await page.$('input[name="updates[]"], input[class*="quantity"], input[type="number"][min]');
+        if (inp6b) { await inp6b.fill('3'); await inp6b.press('Enter'); await page.waitForTimeout(1000); }
+        const clicked6b = await clickCheckout();
+        if (clicked6b) {
+          await page.waitForTimeout(4000);
+          if (/checkout|checkouts/i.test(page.url())) {
+            await page.waitForTimeout(1500);
+            const r6b = await getRouteCountAtCheckout();
+            log('TC-06 Updates[] Checks', 'Multiple products qty increase → only 1 Route at checkout',
+              r6b === 1 ? 'PASS' : 'FAIL',
+              `${r6b} Route item(s) at checkout`, 'TC-06b');
+          }
+        }
+      }
+    } else {
+      log('TC-06 Updates[] Checks', 'Quantity change checks', 'WARN', 'No product URL found');
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    sectionHeader('8 · TC-08: Route Disappears with Digital-Only Cart');
+    // ════════════════════════════════════════════════════════════════════════
+    {
+      await clearCart();
+      const giftCardData = await page.evaluate(async () => {
+        try {
+          const r = await fetch('/products.json?product_type=Gift+Card&limit=5');
+          const d = r.ok ? await r.json() : null;
+          if (d?.products?.length) {
+            const p = d.products[0];
+            const v = p.variants?.[0];
+            return v ? { id: v.id, title: p.title } : null;
+          }
+        } catch(_) {}
+        // Try common gift card slugs
+        for (const slug of ['gift-card', 'gift-cards', 'e-gift-card', 'giftcard']) {
+          try {
+            const r = await fetch(`/products/${slug}.js`);
+            if (r.ok) { const p = await r.json(); return { id: p.variants[0]?.id, title: p.title }; }
+          } catch(_) {}
+        }
+        return null;
+      });
+
+      if (giftCardData?.id) {
+        await addProductToCartApi(giftCardData.id);
+        await safeGoto(cartUrl, 'cart (digital only)');
+        await waitForRouteWidget(page, 4000);
+        await page.waitForTimeout(500);
+        const widgetDigital = await findRouteWidget(page);
+        log('TC-08 Digital-Only Cart', `Route widget absent for digital-only cart ("${giftCardData.title}")`,
+          !widgetDigital.visible ? 'PASS' : 'FAIL',
+          widgetDigital.visible ? 'Route widget is showing for digital-only cart — should be hidden' :
+          'Route widget correctly hidden for digital-only cart', 'TC-08');
+      } else {
+        log('TC-08 Digital-Only Cart', 'Digital product / gift card test', 'WARN',
+          'No gift card product found on this store — verify manually');
+      }
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    sectionHeader('9 · TC-09: Physical + Digital — Premium on Physical Only');
+    // ════════════════════════════════════════════════════════════════════════
+    if (productUrl) {
+      await clearCart();
+      await safeGoto(productUrl, 'product (TC-09)');
+      await clickAddToCart(page);
+      const cartPhysical = await page.evaluate(async () => { const r = await fetch('/cart.js'); return r.ok ? r.json() : null; });
+      const physicalSubtotal = (cartPhysical?.items||[])
+        .filter(i => !/route/i.test(i.title) && i.requires_shipping !== false)
+        .reduce((s,i) => s + i.line_price, 0) / 100;
+
+      // Try to add a digital item
+      const giftCardData2 = await page.evaluate(async () => {
+        for (const slug of ['gift-card','gift-cards','e-gift-card','giftcard']) {
+          try { const r = await fetch(`/products/${slug}.js`); if(r.ok){const p=await r.json();return{id:p.variants[0]?.id};} } catch(_){}
+        }
+        return null;
+      });
+
+      if (giftCardData2?.id) {
+        await addProductToCartApi(giftCardData2.id);
+        await safeGoto(cartUrl, 'cart (TC-09)');
+        await waitForRouteWidget(page, 4000);
+        await page.waitForTimeout(500);
+        const widgetMixed = await findRouteWidget(page);
+        const priceMatch = widgetMixed.text?.match(/\$\s*([\d.]+)/);
+        if (priceMatch && physicalSubtotal > 0) {
+          const shown = parseFloat(priceMatch[1]);
+          const rate = physicalSubtotal <= (RATES.tier1Max||100) ? (RATES.tier1Rate||1.95) : (RATES.tier2Rate||2.5);
+          const expected = (RATES.tier1Format === 'flat' && physicalSubtotal <= (RATES.tier1Max||100)) ? rate : physicalSubtotal * (rate/100);
+          const diff = Math.abs(shown - expected);
+          log('TC-09 Physical+Digital Premium', 'Premium calculated on physical subtotal only',
+            diff <= 0.15 ? 'PASS' : 'FAIL',
+            `Physical subtotal: $${physicalSubtotal.toFixed(2)} | Expected: $${expected.toFixed(2)} | Shown: $${shown.toFixed(2)}${diff>0.15?' ← MISMATCH':''}`,
+            'TC-09');
+        } else {
+          log('TC-09 Physical+Digital Premium', 'Premium on physical only', 'WARN',
+            physicalSubtotal === 0 ? 'Physical subtotal is $0' : 'Could not parse premium from widget text');
+        }
+      } else {
+        log('TC-09 Physical+Digital Premium', 'Physical+Digital premium test', 'WARN', 'No gift card found to add as digital item');
+      }
+    } else {
+      log('TC-09 Physical+Digital Premium', 'Physical+Digital premium test', 'WARN', 'No product URL found');
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    sectionHeader('10 · TC-10: Route Product Auto-Removed from Cart');
+    // ════════════════════════════════════════════════════════════════════════
+    if (productUrl) {
+      await clearCart();
+      await safeGoto(productUrl, 'product (TC-10)');
+      await clickAddToCart(page);
+      await safeGoto(cartUrl, 'cart (TC-10)');
+      await waitForRouteWidget(page, 4000);
+      const countBefore = await getRouteLineItemCount(page);
+
+      // Remove all physical items
+      await page.evaluate(async () => {
+        const cartData = await (await fetch('/cart.js')).json();
+        const updates = {};
+        for (const item of cartData.items) {
+          if (!/route/i.test(item.title) && item.vendor !== 'Route') updates[item.key] = 0;
+        }
+        if (Object.keys(updates).length) {
+          await fetch('/cart/update.js', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({updates}) });
+        }
+      });
+      await page.waitForTimeout(1500);
+      await safeGoto(cartUrl, 'cart after removing physical (TC-10)');
+      await page.waitForTimeout(1500);
+
+      const countAfter = await getRouteLineItemCount(page);
+      log('TC-10 Route Auto-Removed', 'Route removed when no eligible physical items remain',
+        countAfter === 0 ? 'PASS' : 'FAIL',
+        countBefore > 0 && countAfter === 0 ? 'Route correctly auto-removed after physical items removed' :
+        countAfter > 0 ? 'Route still in cart after physical items removed' :
+        'Route was not in cart before test', 'TC-10');
+    } else {
+      log('TC-10 Route Auto-Removed', 'Route auto-removed test', 'WARN', 'No product URL found');
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    sectionHeader('11 · TC-11 + TC-12: Not on Storefront & Collections');
+    // ════════════════════════════════════════════════════════════════════════
+    // TC-11: Route product not browsable on storefront
+    const collectionsUrl = new URL('/collections/all?sort_by=price-ascending', BASE_URL).href;
+    await safeGoto(collectionsUrl, 'collections (TC-11)');
+    await page.waitForTimeout(500);
+    const routeInColl = await page.evaluate(() => {
+      const cards = document.querySelectorAll('a[href*="/products/"], [class*="product-card"], [class*="product-item"]');
+      for (const c of cards) {
+        if (/route/i.test(c.textContent) && /(protection|package|shipping)/i.test(c.textContent)) return true;
+      }
+      return false;
+    });
+    log('TC-11+12 Storefront Visibility', 'Route product NOT visible in /collections/all',
+      !routeInColl ? 'PASS' : 'FAIL',
+      !routeInColl ? 'Route not found in collections' : 'Route product visible in storefront collections!',
+      'TC-11');
+
+    // TC-12: Not in recommendations
+    if (productUrl) {
+      await safeGoto(productUrl, 'product (rec check)');
+      await page.waitForTimeout(1000);
+      const routeInRecs = await page.evaluate(() => {
+        const recs = document.querySelectorAll('[class*="recommend"], [class*="related"], [class*="upsell"], [class*="suggestion"]');
+        for (const r of recs) {
+          if (/route/i.test(r.textContent)) return true;
+        }
+        return false;
+      });
+      log('TC-11+12 Storefront Visibility', 'Route product NOT in product page recommendations',
+        !routeInRecs ? 'PASS' : 'FAIL',
+        !routeInRecs ? 'Route not found in recommendations' : 'Route found in product page recommendations!',
+        'TC-12');
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    sectionHeader('12 · TC-13+14: Value Prop & Info Modal');
+    // ════════════════════════════════════════════════════════════════════════
+    if (productUrl) {
+      await clearCart();
+      await safeGoto(productUrl, 'product (TC-13)');
+      await clickAddToCart(page);
+      await safeGoto(cartUrl, 'cart (TC-13)');
+      await waitForRouteWidget(page, 5000);
+      await page.waitForTimeout(500);
+
+      const widget13 = await findRouteWidget(page);
+      const hasPremiumText = /order protected for \$[\d.]+/i.test(widget13.text || '');
+      log('TC-13 Value Prop', 'Widget shows "Order protected for $[amount]"',
+        hasPremiumText ? 'PASS' : 'WARN',
+        hasPremiumText ? 'Premium wording confirmed' : `Could not detect "Order protected for $X". Widget text: "${(widget13.text||'').slice(0,60).replace(/\s+/g,' ')}"`);
+
+      // Try clicking info icon for expand check
+      const infoIconSelectors = [
+        '[id*="route"] button[type="button"]', '[class*="route"] [class*="info"]',
+        '[class*="route"] button', '[id*="route"] [class*="tooltip"]',
+        '[class*="route-widget"] button', 'route-widget button',
+      ];
+      let infoClicked = false;
+      for (const sel of infoIconSelectors) {
+        const el = await page.$(sel);
+        if (el) {
+          try { await el.click({ timeout: 3000 }); infoClicked = true; break; } catch(_) {}
+        }
+      }
+      if (infoClicked) {
+        await page.waitForTimeout(800);
+        const expanded = await page.evaluate(() => {
+          const text = document.body.innerText;
+          return /benefits|package protection|damage.*loss|fast refund|see details/i.test(text);
+        });
+        log('TC-13 Value Prop', 'Value prop expands and shows benefits content',
+          expanded ? 'PASS' : 'WARN',
+          expanded ? 'BENEFITS section visible after clicking info icon' : 'Could not verify expansion content — check manually');
+      } else {
+        log('TC-13 Value Prop', 'Value prop expand / info icon', 'WARN', 'Info icon not found — verify manually');
+      }
+
+      // TC-14: Route info modal
+      const seeDetailsEl = await page.evaluateHandle(() => {
+        const all = Array.from(document.querySelectorAll('a, button, span'));
+        return all.find(el => /see details/i.test(el.innerText || el.textContent));
+      });
+      if (seeDetailsEl && await seeDetailsEl.evaluate(el => !!el)) {
+        try {
+          await seeDetailsEl.click();
+          await page.waitForTimeout(1000);
+          const modalContent = await page.evaluate(() => {
+            const text = document.body.innerText;
+            return {
+              hasCovered: /we.*got you covered|shipping protection/i.test(text),
+              hasBullets: /instant issue|24.*7.*claim|shipping protection/i.test(text),
+              hasLinks:   /file a claim|user privacy|terms of service/i.test(text),
+            };
+          });
+          log('TC-14 Route Info Modal', 'Info modal opens with correct content',
+            (modalContent.hasCovered && modalContent.hasBullets) ? 'PASS' : 'WARN',
+            `"We've got you covered": ${modalContent.hasCovered} | Bullets: ${modalContent.hasBullets} | Links: ${modalContent.hasLinks}`);
+        } catch(e) {
+          log('TC-14 Route Info Modal', 'Info modal', 'WARN', 'Could not interact with See Details — verify manually');
+        }
+      } else {
+        log('TC-14 Route Info Modal', 'Info modal — "See Details" link', 'WARN', '"See Details" not found — verify manually');
+      }
+    } else {
+      log('TC-13+14 Value Prop & Modal', 'Value prop and modal checks', 'WARN', 'No product URL found');
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    sectionHeader('13 · TC-15: BFCache Check');
+    // ════════════════════════════════════════════════════════════════════════
+    if (productUrl) {
+      await clearCart();
+      await safeGoto(productUrl, 'product (BFCache)');
+      await clickAddToCart(page);
+      await safeGoto(cartUrl, 'cart (BFCache)');
+      await waitForRouteWidget(page, 4000);
+      await page.waitForTimeout(500);
+
+      const routeBefore = await getRouteLineItemCount(page);
+      if (routeBefore > 0) {
+        // Navigate to checkout
+        const checkoutBtn = await page.$('button[name="checkout"], input[name="checkout"], a[href*="/checkout"]');
+        if (checkoutBtn) {
+          await checkoutBtn.click();
+          await page.waitForTimeout(3000);
+          if (/checkout|checkouts/i.test(page.url())) {
+            // Go back
+            await page.goBack({ waitUntil: 'domcontentloaded', timeout: 15000 }).catch(()=>{});
+            await page.waitForTimeout(5000); // wait for BFCache handler to fire
+            const routeAfter = await getRouteLineItemCount(page);
+            log('TC-15 BFCache', 'Route item removed after browser back navigation from checkout',
+              routeAfter === 0 ? 'PASS' : 'FAIL',
+              routeAfter === 0 ? 'BFCache handler fired correctly — Route removed after back navigation' :
+              `Route still in cart (${routeAfter} item(s)) after back navigation — BFCache handler may not be installed`,
+              'TC-15');
+          } else {
+            log('TC-15 BFCache', 'BFCache test', 'WARN', 'Did not reach checkout for BFCache test');
+          }
+        } else {
+          log('TC-15 BFCache', 'BFCache test', 'WARN', 'No checkout button found for BFCache test');
+        }
+      } else {
+        log('TC-15 BFCache', 'BFCache test', 'WARN', 'Route not in cart before BFCache test');
+      }
+    } else {
+      log('TC-15 BFCache', 'BFCache check', 'WARN', 'No product URL found');
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    sectionHeader('14 · Design Checks (Non-Functional)');
+    // ════════════════════════════════════════════════════════════════════════
+    if (productUrl) {
+      await clearCart();
+      await safeGoto(productUrl, 'product (design)');
+      await clickAddToCart(page);
+
+      // Mobile alignment
+      await page.setViewportSize({ width: 375, height: 812 });
+      await safeGoto(cartUrl, 'cart (mobile design)');
+      await waitForRouteWidget(page, 4000);
+      const mobileWidget = await findRouteWidget(page);
+      if (mobileWidget.found) {
+        log('Design', 'Widget not overflowing mobile viewport (375px)',
+          mobileWidget.right <= 390 ? 'PASS' : 'FAIL',
+          mobileWidget.right > 390 ? `Widget extends to ${Math.round(mobileWidget.right)}px` : 'Fits within 375px viewport');
+      } else {
+        log('Design', 'Widget visible on mobile (375px)', 'WARN', 'Widget not found at mobile width');
+      }
+      await page.setViewportSize({ width: 1280, height: 800 });
     }
 
   } catch (err) {
