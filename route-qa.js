@@ -95,8 +95,30 @@ function startLiveServer() {
     console.log('  ℹ️   Fill in the config form and click "Start QA Checklist" to begin\n');
     try {
       const { execSync } = require('child_process');
-      const openCmd = process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'start' : 'xdg-open';
-      execSync(`${openCmd} http://localhost:3000`);
+      if (process.platform === 'darwin') {
+        // Open dashboard and position it on the right half of the screen
+        execSync(`open http://localhost:3000`);
+        setTimeout(() => {
+          try {
+            execSync(`osascript -e '
+              tell application "Google Chrome"
+                activate
+                set bounds of front window to {960, 0, 1920, 1080}
+              end tell'`);
+          } catch(_) {
+            try {
+              execSync(`osascript -e '
+                tell application "Safari"
+                  activate
+                  set bounds of front window to {960, 0, 1920, 1080}
+                end tell'`);
+            } catch(_) {}
+          }
+        }, 1500);
+      } else {
+        const openCmd = process.platform === 'win32' ? 'start' : 'xdg-open';
+        execSync(`${openCmd} http://localhost:3000`);
+      }
     } catch (_) {}
   });
 
@@ -365,7 +387,8 @@ async function runQA(RATES) {
     '--disable-web-security',
     '--disable-features=IsolateOrigins,site-per-process',
   ];
-  const windowArgs = [...launchArgs, '--start-maximized'];
+  // Open Playwright on left half of screen, dashboard on right half
+  const windowArgs = [...launchArgs, '--window-size=960,1080', '--window-position=0,0'];
   try {
     browser = await chromium.launch({ channel: 'chrome', headless: HEADLESS, slowMo: HEADLESS ? 0 : 100, args: windowArgs });
     console.log('  🌐  Using real Chrome browser');
@@ -375,7 +398,7 @@ async function runQA(RATES) {
   }
 
   const context = await browser.newContext({
-    viewport: null, // use the full maximised window size — no artificial constraint
+    viewport: { width: 960, height: 1040 }, // left half of screen
     userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
     locale: 'en-US',
     timezoneId: 'America/New_York',
