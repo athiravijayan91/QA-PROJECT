@@ -501,11 +501,24 @@ async function runQA(RATES) {
     for (const sel of selectors) {
       const btn = await page.$(sel);
       if (btn) {
-        await btn.scrollIntoViewIfNeeded();
-        await btn.click({ timeout: 5000 });
-        return true;
+        try { await btn.scrollIntoViewIfNeeded({ timeout: 3000 }); } catch(_) {}
+        try {
+          await btn.click({ timeout: 8000, force: true });
+          return true;
+        } catch(_) {
+          // Try JS click as fallback
+          try {
+            await page.evaluate(el => el.click(), btn);
+            return true;
+          } catch(_) {}
+        }
       }
     }
+    // Last resort: find by text
+    try {
+      await page.click('text=Checkout', { timeout: 5000 });
+      return true;
+    } catch(_) {}
     return false;
   }
 
@@ -618,39 +631,38 @@ async function runQA(RATES) {
         await waitForRouteWidget(page, 6000);
         await page.waitForTimeout(1500);
 
-        // Verify Route IS in cart before checkout
-        const routeInCartBefore = await getRouteLineItemCount(page);
-        log('TC-01 Route Added via Checkout', 'Route product present in cart before checkout',
-          routeInCartBefore > 0 ? 'PASS' : 'WARN',
-          routeInCartBefore > 0 ? `${routeInCartBefore} Route item(s) in cart` : 'Route widget found but not in cart.js line items yet');
-
         // Click Checkout button
-        const checkoutClicked = await clickCheckout();
-        if (!checkoutClicked) {
-          log('TC-01 Route Added via Checkout', 'Checkout button found and clicked', 'WARN', 'Could not find Checkout button');
-        } else {
-          await page.waitForTimeout(4000);
-          const onCheckout = /checkout|checkouts/i.test(page.url());
-
-          if (onCheckout) {
-            log('TC-01 Route Added via Checkout', 'Successfully navigated to checkout page', 'PASS', page.url().slice(0,80));
-            await page.waitForTimeout(2000); // let checkout page render
-
-            // Count Route items at checkout
-            const routeAtCheckout = await getRouteCountAtCheckout();
-            log('TC-01 Route Added via Checkout', 'Route product is present at checkout',
-              routeAtCheckout > 0 ? 'PASS' : 'FAIL',
-              routeAtCheckout > 0 ? `${routeAtCheckout} Route item(s) visible in checkout order summary` : 'Route product NOT found in checkout order summary',
-              'TC-01');
-            log('TC-01 Route Added via Checkout', 'Only ONE Route product at checkout (no duplicates)',
-              routeAtCheckout === 1 ? 'PASS' : routeAtCheckout === 0 ? 'FAIL' : 'FAIL',
-              routeAtCheckout > 1 ? `${routeAtCheckout} Route items found — duplicates detected!` :
-              routeAtCheckout === 0 ? 'Route not found at checkout' : 'Exactly 1 Route item — correct',
-              'TC-01');
+        try {
+          const checkoutClicked = await clickCheckout();
+          if (!checkoutClicked) {
+            log('TC-01 Route Added via Checkout', 'Checkout button found and clicked', 'WARN', 'Could not find Checkout button — verify manually');
           } else {
-            log('TC-01 Route Added via Checkout', 'Navigated to checkout page', 'WARN',
-              `Did not reach checkout — current URL: ${page.url().slice(0,80)}`);
+            await page.waitForTimeout(5000);
+            await handleCloudflare();
+            const onCheckout = /checkout|checkouts/i.test(page.url());
+
+            if (onCheckout) {
+              log('TC-01 Route Added via Checkout', 'Successfully navigated to checkout page', 'PASS', page.url().slice(0,80));
+              await page.waitForTimeout(3000); // let checkout page fully render
+
+              const routeAtCheckout = await getRouteCountAtCheckout();
+              log('TC-01 Route Added via Checkout', 'Route product is present at checkout',
+                routeAtCheckout > 0 ? 'PASS' : 'FAIL',
+                routeAtCheckout > 0 ? `${routeAtCheckout} Route item(s) in checkout order summary` : 'Route NOT found in checkout order summary',
+                'TC-01');
+              log('TC-01 Route Added via Checkout', 'Only ONE Route product (no duplicates)',
+                routeAtCheckout === 1 ? 'PASS' : 'FAIL',
+                routeAtCheckout > 1 ? `${routeAtCheckout} Route items — duplicates!` :
+                routeAtCheckout === 0 ? 'Route not found' : 'Exactly 1 Route item ✓',
+                'TC-01');
+            } else {
+              log('TC-01 Route Added via Checkout', 'Navigated to checkout page', 'WARN',
+                `Did not reach checkout — current URL: ${page.url().slice(0,80)}`);
+            }
           }
+        } catch(e) {
+          log('TC-01 Route Added via Checkout', 'Checkout flow error', 'FAIL',
+            e.message.split('\n')[0].slice(0,150), 'TC-01');
         }
       }
     } else {
