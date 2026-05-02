@@ -375,7 +375,7 @@ async function runQA(RATES) {
   }
 
   const context = await browser.newContext({
-    viewport: { width: 1920, height: 1080 },
+    viewport: null, // use the full maximised window size — no artificial constraint
     userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
     locale: 'en-US',
     timezoneId: 'America/New_York',
@@ -553,26 +553,39 @@ async function runQA(RATES) {
 
   // ── Helper: find CWC link and click ──────────────────────────────────────
   async function clickCWC() {
+    // First scroll to bottom of page so CWC link (usually below Checkout btn) is visible
+    await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+    await page.waitForTimeout(800);
+
     const selectors = [
       'a[class*="without-coverage"]', 'a[class*="cwc"]',
       'a[id*="without-coverage"]', 'button[class*="without"]',
       '[data-cwc]', '[data-without-coverage]',
+      'a[href*="checkout"][class*="without"]',
     ];
-    // Also text-based
     for (const sel of selectors) {
       const el = await page.$(sel);
-      if (el) { await el.click(); return true; }
+      if (el) {
+        try { await el.scrollIntoViewIfNeeded({ timeout: 2000 }); } catch(_) {}
+        try { await el.click({ force: true, timeout: 5000 }); return true; } catch(_) {}
+        try { await page.evaluate(e => e.click(), el); return true; } catch(_) {}
+      }
     }
-    // Text search fallback
-    const cwcEl = await page.evaluateHandle(() => {
-      const all = Array.from(document.querySelectorAll('a, button'));
-      return all.find(el => /checkout without coverage|without coverage|no coverage/i.test(el.innerText || el.textContent));
+
+    // Text-based search — most reliable for CWC
+    const clicked = await page.evaluate(() => {
+      const all = Array.from(document.querySelectorAll('a, button, span, div'));
+      const cwc = all.find(el =>
+        /checkout without coverage|without coverage|no coverage|cwc/i.test(el.innerText || el.textContent || '')
+        && (el.tagName === 'A' || el.tagName === 'BUTTON' || el.onclick || el.getAttribute('href'))
+      );
+      if (cwc) { cwc.click(); return true; }
+      // Also try just text matching any clickable element
+      const any = all.find(el => /checkout without coverage|without coverage/i.test(el.innerText || ''));
+      if (any) { any.click(); return true; }
+      return false;
     });
-    if (cwcEl && await cwcEl.evaluate(el => !!el)) {
-      await cwcEl.click();
-      return true;
-    }
-    return false;
+    return clicked;
   }
 
   // ── Helper: count Route items on checkout page ────────────────────────────
@@ -1264,8 +1277,8 @@ async function runQA(RATES) {
       await safeGoto(productUrl, 'product (design)');
       await clickAddToCart(page);
 
-      // Mobile alignment
-      await page.setViewportSize({ width: 375, height: 812 });
+      // Mobile alignment — temporarily shrink viewport for mobile check
+      await page.setViewportSize({ width: 390, height: 844 });
       await safeGoto(cartUrl, 'cart (mobile design)');
       await waitForRouteWidget(page, 6000);
       const mobileWidget = await findRouteWidget(page);
@@ -1276,7 +1289,7 @@ async function runQA(RATES) {
       } else {
         log('Design', 'Widget visible on mobile (375px)', 'WARN', 'Widget not found at mobile width');
       }
-      await page.setViewportSize({ width: 1280, height: 800 });
+      await page.setViewportSize({ width: 1440, height: 900 }); // restore to desktop size
     }
 
   } catch (err) {
