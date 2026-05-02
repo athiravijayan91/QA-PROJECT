@@ -641,19 +641,40 @@ async function runQA(RATES) {
       await safeGoto(productUrl, 'product page');
       addedToCart = await clickAddToCart(page);
       await safeGoto(cartUrl, 'cart');
+      await closePopups();
       await waitForRouteWidget(page, 6000);
-      await page.waitForTimeout(1500);
-      const widget = await findRouteWidget(page);
+      await page.waitForTimeout(2000);
+
+      // For Preferred Checkout: confirm by checking for value prop text + CWC link
+      // rather than CSS visibility (the widget renders as page content, not a hidden element)
+      const pcCheck = await page.evaluate(() => {
+        const text = document.body.innerText || '';
+        const hasValueProp = /order (is )?protected for \$|order protected for/i.test(text);
+        const hasCWC = /checkout without coverage|without coverage/i.test(text);
+        const hasCheckoutBtn = !!document.querySelector(
+          'button[name="checkout"], input[name="checkout"], a[href*="/checkout"], .checkout-button'
+        );
+        return { hasValueProp, hasCWC, hasCheckoutBtn, snippet: text.slice(0, 200).replace(/\s+/g,' ') };
+      });
+
       log('Widget Confirmation', 'Preferred Checkout widget loads on cart page',
-        widget.found ? 'PASS' : 'FAIL',
-        widget.found ? `Widget found: ${widget.selector}` : 'Route widget not found after adding a product to cart',
+        (pcCheck.hasValueProp || pcCheck.hasCWC) ? 'PASS' : 'FAIL',
+        pcCheck.hasValueProp
+          ? 'Value prop "Order protected for $X" visible on cart page'
+          : pcCheck.hasCWC
+            ? '"Checkout Without Coverage" link visible on cart page'
+            : 'Neither value prop text nor CWC link found on cart page',
         'TC-W');
-      if (widget.found) {
-        log('Widget Confirmation', 'Widget is visible to customer',
-          widget.visible ? 'PASS' : 'FAIL',
-          widget.visible ? '' : 'Widget is in DOM but hidden via CSS', 'TC-W');
-        if (widget.text) log('Widget Confirmation', 'Widget text content', 'INFO', widget.text.replace(/\s+/g,' ').trim().slice(0,120));
-      }
+
+      log('Widget Confirmation', '"Checkout Without Coverage" link present',
+        pcCheck.hasCWC ? 'PASS' : 'FAIL',
+        pcCheck.hasCWC ? 'CWC link found' : 'CWC link not found — Preferred Checkout widget may not be loading',
+        'TC-W');
+
+      log('Widget Confirmation', 'Checkout button present',
+        pcCheck.hasCheckoutBtn ? 'PASS' : 'WARN',
+        pcCheck.hasCheckoutBtn ? 'Checkout button found' : 'Checkout button not detected');
+
     } else {
       log('Widget Confirmation', 'Preferred Checkout widget loads on cart page', 'WARN', 'No product URL found to add to cart');
     }
