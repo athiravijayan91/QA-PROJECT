@@ -471,6 +471,34 @@ async function runQA(RATES) {
   let addedToCart = false;
   const cartUrl   = new URL('/cart', BASE_URL).href;
 
+  // ── Helper: close common popups ───────────────────────────────────────────
+  async function closePopups() {
+    const popupSelectors = [
+      // Cookie / consent banners
+      'button[id*="accept"], button[class*="accept-cookie"], button[class*="cookie-accept"]',
+      '[id*="cookie"] button, [class*="cookie-banner"] button',
+      // Newsletter / email capture popups
+      'button[class*="close"], button[aria-label*="close" i], button[aria-label*="dismiss" i]',
+      '[class*="modal"] button[class*="close"], [class*="popup"] button[class*="close"]',
+      // Chat widgets
+      'button[id*="chat-close"], [class*="chat"] button[class*="close"]',
+      // Generic close buttons
+      'button[data-dismiss="modal"]',
+    ];
+    for (const sel of popupSelectors) {
+      try {
+        const els = await page.$$(sel);
+        for (const el of els) {
+          const visible = await el.isVisible().catch(() => false);
+          if (visible) { await el.click({ timeout: 2000 }).catch(() => {}); }
+        }
+      } catch(_) {}
+    }
+    // Press Escape to dismiss any remaining modal
+    await page.keyboard.press('Escape').catch(() => {});
+    await page.waitForTimeout(500);
+  }
+
   // ── Helper: clear cart ────────────────────────────────────────────────────
   async function clearCart() {
     await page.evaluate(async () => { await fetch('/cart/clear.js', { method: 'POST' }); });
@@ -547,23 +575,22 @@ async function runQA(RATES) {
   }
 
   // ── Helper: count Route items on checkout page ────────────────────────────
+  // Specifically looks for 'Shipping Protection by Route' as shown in checkout order summary
   async function getRouteCountAtCheckout() {
     return page.evaluate(() => {
       const fullText = document.body.innerText || '';
-      // Count lines in order summary that mention Route
-      const lineItems = document.querySelectorAll(
-        '[class*="line-item"], [class*="product__description"], [class*="product-item"], ' +
-        '.order-summary__emphasis, [data-order-summary] tr, ' +
-        '.checkout__order-summary .product, [class*="checkout-item"]'
-      );
+      // Primary: look for 'Shipping Protection by Route' in any element
+      const allEls = document.querySelectorAll('td, li, div, span, p');
       let count = 0;
-      for (const el of lineItems) {
-        const t = el.innerText || el.textContent || '';
-        if (/route/i.test(t)) count++;
+      for (const el of allEls) {
+        const t = (el.childElementCount === 0 ? el.innerText || el.textContent : '') || '';
+        if (/shipping protection by route/i.test(t.trim())) { count++; break; }
       }
-      // Fallback: text scan
-      if (count === 0 && /routes*(package|protection|shipping|insurance)/i.test(fullText)) count = 1;
-      return count;
+      if (count > 0) return count;
+      // Fallback: full page text scan
+      if (/shipping protection by route/i.test(fullText)) return 1;
+      if (/route.*protection|route.*shipping|route.*package/i.test(fullText)) return 1;
+      return 0;
     });
   }
 
@@ -590,6 +617,7 @@ async function runQA(RATES) {
   try {
     // Discover products first (needed by most tests)
     await discoverProducts();
+    await closePopups(); // dismiss any homepage popups
 
     // ════════════════════════════════════════════════════════════════════════
     sectionHeader('1 · Widget Version Confirmation');
@@ -628,6 +656,7 @@ async function runQA(RATES) {
         log('TC-01 Route Added via Checkout', 'Add to Cart succeeded', 'WARN', 'Could not click Add to Cart — test skipped');
       } else {
         await safeGoto(cartUrl, 'cart (TC-01)');
+        await closePopups();
         await waitForRouteWidget(page, 6000);
         await page.waitForTimeout(1500);
 
@@ -643,7 +672,8 @@ async function runQA(RATES) {
 
             if (onCheckout) {
               log('TC-01 Route Added via Checkout', 'Successfully navigated to checkout page', 'PASS', page.url().slice(0,80));
-              await page.waitForTimeout(3000); // let checkout page fully render
+              await page.waitForTimeout(3000);
+              await closePopups(); // close any checkout popups
 
               const routeAtCheckout = await getRouteCountAtCheckout();
               log('TC-01 Route Added via Checkout', 'Route product is present at checkout',
@@ -857,6 +887,7 @@ async function runQA(RATES) {
         await safeGoto(productUrl2, 'product 2 (TC-05b)');
         await clickAddToCart(page);
         await safeGoto(cartUrl, 'cart (TC-05b)');
+        await closePopups();
         await waitForRouteWidget(page, 6000);
         const clicked5b = await clickCheckout();
         if (clicked5b) {
@@ -921,6 +952,7 @@ async function runQA(RATES) {
         await safeGoto(productUrl2, 'product 2 (TC-06b)');
         await clickAddToCart(page);
         await safeGoto(cartUrl, 'cart (TC-06b)');
+        await closePopups();
         await waitForRouteWidget(page, 6000);
         const inp6b = await page.$('input[name="updates[]"], input[class*="quantity"], input[type="number"][min]');
         if (inp6b) { await inp6b.fill('3'); await inp6b.press('Enter'); await page.waitForTimeout(1000); }
@@ -969,6 +1001,7 @@ async function runQA(RATES) {
       if (giftCardData?.id) {
         await addProductToCartApi(giftCardData.id);
         await safeGoto(cartUrl, 'cart (digital only)');
+        await closePopups();
         await waitForRouteWidget(page, 6000);
         await page.waitForTimeout(1500);
         const widgetDigital = await findRouteWidget(page);
@@ -1006,6 +1039,7 @@ async function runQA(RATES) {
       if (giftCardData2?.id) {
         await addProductToCartApi(giftCardData2.id);
         await safeGoto(cartUrl, 'cart (TC-09)');
+        await closePopups();
         await waitForRouteWidget(page, 6000);
         await page.waitForTimeout(1500);
         const widgetMixed = await findRouteWidget(page);
