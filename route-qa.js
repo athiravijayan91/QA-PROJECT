@@ -357,14 +357,36 @@ async function promptConfig() {
 // ── Main QA Runner ─────────────────────────────────────────────────────────
 async function runQA(RATES) {
 
-  const browser = await chromium.launch({
-    headless: HEADLESS,
-    slowMo: HEADLESS ? 0 : 200,
-  });
+  // Use real Chrome if installed — much less likely to trigger Cloudflare
+  let browser;
+  const launchArgs = [
+    '--disable-blink-features=AutomationControlled',
+    '--no-sandbox',
+    '--disable-web-security',
+    '--disable-features=IsolateOrigins,site-per-process',
+  ];
+  try {
+    browser = await chromium.launch({ channel: 'chrome', headless: HEADLESS, slowMo: HEADLESS ? 0 : 100, args: launchArgs });
+    console.log('  🌐  Using real Chrome browser');
+  } catch (_) {
+    browser = await chromium.launch({ headless: HEADLESS, slowMo: HEADLESS ? 0 : 100, args: launchArgs });
+    console.log('  🌐  Using bundled Chromium');
+  }
 
   const context = await browser.newContext({
     viewport: { width: 1280, height: 800 },
-    userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+    userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+    locale: 'en-US',
+    timezoneId: 'America/New_York',
+    permissions: ['geolocation'],
+    extraHTTPHeaders: { 'Accept-Language': 'en-US,en;q=0.9' },
+  });
+
+  // Hide automation indicators
+  await context.addInitScript(() => {
+    Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+    Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3] });
+    window.chrome = { runtime: {} };
   });
 
   const consoleErrors = [];
@@ -388,12 +410,87 @@ async function runQA(RATES) {
     }
   });
 
+  // ── Cloudflare challenge — auto-solve ────────────────────────────────────
+  async function isChallengePresent() {
+    return page.evaluate(() => {
+      const t = (document.title + ' ' + (document.body?.innerText||'')).toLowerCase();
+      return t.includes('verify you are human') || t.includes('just a moment') || t.includes('checking your browser');
+    }).catch(() => false);
+  }
+
+  async function handleCloudflare() {
+    if (!(await isChallengePresent())) return false;
+
+    console.log('\n  🔒  Cloudflare detected — attempting auto-solve...');
+    sseEmit('cloudflare', { message: '🔒 Cloudflare detected — attempting to auto-solve...' });
+
+    // Step 1: simulate human mouse movement before clicking
+    await page.mouse.move(200 + Math.random()*100, 200 + Math.random()*100);
+    await page.waitForTimeout(500 + Math.random()*500);
+    await page.mouse.move(400 + Math.random()*100, 300 + Math.random()*100);
+    await page.waitForTimeout(300 + Math.random()*300);
+
+    // Step 2: wait briefly — real Chrome often auto-passes after a moment
+    await page.waitForTimeout(3000);
+    if (!(await isChallengePresent())) {
+      console.log('  ✅ Cloudflare auto-passed\n');
+      return true;
+    }
+
+    // Step 3: try to find and click the checkbox inside the Cloudflare iframe
+    const frames = page.frames();
+    for (const frame of frames) {
+      try {
+        const frameUrl = frame.url();
+        if (/challenges\.cloudflare|turnstile|cf-chl/i.test(frameUrl) || frameUrl !== page.url()) {
+          // Move into frame area first
+          const frameEl = await page.$(`iframe[src*="challenges"], iframe[src*="turnstile"], iframe[src*="cf-chl"]`);
+          if (frameEl) {
+            const box = await frameEl.boundingBox();
+            if (box) {
+              await page.mouse.move(box.x + box.width/2, box.y + box.height/2, { steps: 10 });
+              await page.waitForTimeout(500);
+            }
+          }
+          // Try clicking the checkbox
+          for (const sel of ['input[type="checkbox"]', '[class*="mark"]', '[class*="check"]', 'label', 'body']) {
+            const el = await frame.$(sel);
+            if (el) {
+              await el.click({ delay: 50 + Math.random()*100 });
+              await page.waitForTimeout(2000);
+              if (!(await isChallengePresent())) {
+                console.log('  ✅ Cloudflare checkbox clicked — solved\n');
+                await page.waitForTimeout(1500);
+                return true;
+              }
+              break;
+            }
+          }
+        }
+      } catch(_) {}
+    }
+
+    // Step 4: wait up to 20s for real Chrome trust signals to kick in
+    for (let i = 0; i < 20; i++) {
+      await page.waitForTimeout(1000);
+      if (!(await isChallengePresent())) {
+        console.log('  ✅ Cloudflare passed after wait\n');
+        await page.waitForTimeout(1000);
+        return true;
+      }
+    }
+
+    console.log('  ⚠️  Could not auto-solve Cloudflare — this page may block automation\n');
+    return false;
+  }
+
   // Navigate with fallback strategies
   async function safeGoto(url, label = '') {
     for (const waitUntil of ['domcontentloaded', 'commit']) {
       try {
         await page.goto(url, { waitUntil, timeout: 30000 });
         await page.waitForTimeout(1500);
+        await handleCloudflare(); // pause if Cloudflare appears
         return true;
       } catch (e) {
         if (waitUntil === 'commit') {
