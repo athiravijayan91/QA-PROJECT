@@ -410,7 +410,7 @@ async function runQA(RATES) {
     }
   });
 
-  // ── Cloudflare challenge — auto-solve ────────────────────────────────────
+  // ── Cloudflare challenge — pause and wait for human ──────────────────────
   async function isChallengePresent() {
     return page.evaluate(() => {
       const t = (document.title + ' ' + (document.body?.innerText||'')).toLowerCase();
@@ -421,67 +421,30 @@ async function runQA(RATES) {
   async function handleCloudflare() {
     if (!(await isChallengePresent())) return false;
 
-    console.log('\n  🔒  Cloudflare detected — attempting auto-solve...');
-    sseEmit('cloudflare', { message: '🔒 Cloudflare detected — attempting to auto-solve...' });
+    console.log('\n  🔒  Cloudflare challenge detected!');
+    console.log('  👉  Please solve it in the browser window, then the script will continue automatically');
+    console.log('  ⏳  Waiting up to 60 seconds...\n');
+    sseEmit('cloudflare', { message: '🔒 Cloudflare challenge — please solve it in the browser window to continue' });
 
-    // Step 1: simulate human mouse movement before clicking
-    await page.mouse.move(200 + Math.random()*100, 200 + Math.random()*100);
-    await page.waitForTimeout(500 + Math.random()*500);
-    await page.mouse.move(400 + Math.random()*100, 300 + Math.random()*100);
-    await page.waitForTimeout(300 + Math.random()*300);
-
-    // Step 2: wait briefly — real Chrome often auto-passes after a moment
-    await page.waitForTimeout(3000);
-    if (!(await isChallengePresent())) {
-      console.log('  ✅ Cloudflare auto-passed\n');
-      return true;
-    }
-
-    // Step 3: try to find and click the checkbox inside the Cloudflare iframe
-    const frames = page.frames();
-    for (const frame of frames) {
-      try {
-        const frameUrl = frame.url();
-        if (/challenges\.cloudflare|turnstile|cf-chl/i.test(frameUrl) || frameUrl !== page.url()) {
-          // Move into frame area first
-          const frameEl = await page.$(`iframe[src*="challenges"], iframe[src*="turnstile"], iframe[src*="cf-chl"]`);
-          if (frameEl) {
-            const box = await frameEl.boundingBox();
-            if (box) {
-              await page.mouse.move(box.x + box.width/2, box.y + box.height/2, { steps: 10 });
-              await page.waitForTimeout(500);
-            }
-          }
-          // Try clicking the checkbox
-          for (const sel of ['input[type="checkbox"]', '[class*="mark"]', '[class*="check"]', 'label', 'body']) {
-            const el = await frame.$(sel);
-            if (el) {
-              await el.click({ delay: 50 + Math.random()*100 });
-              await page.waitForTimeout(2000);
-              if (!(await isChallengePresent())) {
-                console.log('  ✅ Cloudflare checkbox clicked — solved\n');
-                await page.waitForTimeout(1500);
-                return true;
-              }
-              break;
-            }
-          }
-        }
-      } catch(_) {}
-    }
-
-    // Step 4: wait up to 20s for real Chrome trust signals to kick in
-    for (let i = 0; i < 20; i++) {
+    for (let i = 0; i < 60; i++) {
       await page.waitForTimeout(1000);
       if (!(await isChallengePresent())) {
-        console.log('  ✅ Cloudflare passed after wait\n');
-        await page.waitForTimeout(1000);
+        console.log('  ✅ Cloudflare solved — continuing...\n');
+        await page.waitForTimeout(2000);
         return true;
       }
+      if (i === 15) console.log('  ⏳ Still waiting... (45s left)');
+      if (i === 30) console.log('  ⏳ Still waiting... (30s left)');
+      if (i === 45) console.log('  ⏳ Still waiting... (15s left)');
     }
-
-    console.log('  ⚠️  Could not auto-solve Cloudflare — this page may block automation\n');
+    console.log('  ⚠️  Cloudflare not solved in time — continuing anyway\n');
     return false;
+  }
+
+  // ── Gap between tests ─────────────────────────────────────────────────────
+  // Gives the page time to settle and widget to appear between test sections
+  async function testGap(ms = 3000) {
+    await page.waitForTimeout(ms);
   }
 
   // Navigate with fallback strategies
@@ -617,13 +580,14 @@ async function runQA(RATES) {
 
     // ════════════════════════════════════════════════════════════════════════
     sectionHeader('1 · Widget Version Confirmation');
+    await testGap(2000);
     // ════════════════════════════════════════════════════════════════════════
     if (productUrl) {
       await safeGoto(productUrl, 'product page');
       addedToCart = await clickAddToCart(page);
       await safeGoto(cartUrl, 'cart');
-      await waitForRouteWidget(page, 5000);
-      await page.waitForTimeout(400);
+      await waitForRouteWidget(page, 6000);
+      await page.waitForTimeout(1500);
       const widget = await findRouteWidget(page);
       log('Widget Confirmation', 'Preferred Checkout widget loads on cart page',
         widget.found ? 'PASS' : 'FAIL',
@@ -641,6 +605,7 @@ async function runQA(RATES) {
 
     // ════════════════════════════════════════════════════════════════════════
     sectionHeader('2 · TC-01: Route Added via Checkout ⭐');
+    await testGap(2000);
     // ════════════════════════════════════════════════════════════════════════
     if (productUrl) {
       await clearCart();
@@ -650,8 +615,8 @@ async function runQA(RATES) {
         log('TC-01 Route Added via Checkout', 'Add to Cart succeeded', 'WARN', 'Could not click Add to Cart — test skipped');
       } else {
         await safeGoto(cartUrl, 'cart (TC-01)');
-        await waitForRouteWidget(page, 5000);
-        await page.waitForTimeout(500);
+        await waitForRouteWidget(page, 6000);
+        await page.waitForTimeout(1500);
 
         // Verify Route IS in cart before checkout
         const routeInCartBefore = await getRouteLineItemCount(page);
@@ -694,14 +659,15 @@ async function runQA(RATES) {
 
     // ════════════════════════════════════════════════════════════════════════
     sectionHeader('3 · TC-02: Route Removed via CWC');
+    await testGap(2000);
     // ════════════════════════════════════════════════════════════════════════
     if (productUrl) {
       await clearCart();
       await safeGoto(productUrl, 'product page (TC-02)');
       await clickAddToCart(page);
       await safeGoto(cartUrl, 'cart (TC-02)');
-      await waitForRouteWidget(page, 5000);
-      await page.waitForTimeout(500);
+      await waitForRouteWidget(page, 6000);
+      await page.waitForTimeout(1500);
 
       const cwcClicked = await clickCWC();
       if (!cwcClicked) {
@@ -733,14 +699,15 @@ async function runQA(RATES) {
 
     // ════════════════════════════════════════════════════════════════════════
     sectionHeader('4 · TC-03: Premium Calculation');
+    await testGap(2000);
     // ════════════════════════════════════════════════════════════════════════
     if (productUrl) {
       await clearCart();
       await safeGoto(productUrl, 'product page (premium)');
       await clickAddToCart(page);
       await safeGoto(cartUrl, 'cart (premium)');
-      await waitForRouteWidget(page, 5000);
-      await page.waitForTimeout(500);
+      await waitForRouteWidget(page, 6000);
+      await page.waitForTimeout(1500);
 
       try {
         const cartData = await page.evaluate(async () => {
@@ -793,12 +760,13 @@ async function runQA(RATES) {
 
     // ════════════════════════════════════════════════════════════════════════
     sectionHeader('5 · TC-04: Widget Disappears Above Threshold');
+    await testGap(2000);
     // ════════════════════════════════════════════════════════════════════════
     {
       const coverageLimit = RATES.coverageLimit || 5000;
       await clearCart();
       await safeGoto(cartUrl, 'cart (coverage limit)');
-      await waitForRouteWidget(page, 4000);
+      await waitForRouteWidget(page, 6000);
       const widgetBelow = await findRouteWidget(page);
 
       if (!widgetBelow.found) {
@@ -823,7 +791,7 @@ async function runQA(RATES) {
               }
             }
             await safeGoto(cartUrl, 'cart (above limit)');
-            await waitForRouteWidget(page, 4000);
+            await waitForRouteWidget(page, 6000);
             const widgetAbove = await findRouteWidget(page);
             const newCart = await page.evaluate(async () => { const r = await fetch('/cart.js'); return r.ok ? r.json() : null; });
             const newSubtotal = (newCart?.total_price||0) / 100;
@@ -844,6 +812,7 @@ async function runQA(RATES) {
 
     // ════════════════════════════════════════════════════════════════════════
     sectionHeader('6 · TC-05: Multi Route Checkout');
+    await testGap(2000);
     // ════════════════════════════════════════════════════════════════════════
     if (productUrl) {
       // 6a: single product
@@ -851,7 +820,7 @@ async function runQA(RATES) {
       await safeGoto(productUrl, 'product (TC-05a)');
       await clickAddToCart(page);
       await safeGoto(cartUrl, 'cart (TC-05a)');
-      await waitForRouteWidget(page, 4000);
+      await waitForRouteWidget(page, 6000);
       const clicked5a = await clickCheckout();
       if (clicked5a) {
         await page.waitForTimeout(4000);
@@ -876,10 +845,10 @@ async function runQA(RATES) {
         await safeGoto(productUrl2, 'product 2 (TC-05b)');
         await clickAddToCart(page);
         await safeGoto(cartUrl, 'cart (TC-05b)');
-        await waitForRouteWidget(page, 4000);
+        await waitForRouteWidget(page, 6000);
         const clicked5b = await clickCheckout();
         if (clicked5b) {
-          await page.waitForTimeout(4000);
+          await page.waitForTimeout(5000);
           if (/checkout|checkouts/i.test(page.url())) {
             await page.waitForTimeout(1500);
             const r5b = await getRouteCountAtCheckout();
@@ -897,6 +866,7 @@ async function runQA(RATES) {
 
     // ════════════════════════════════════════════════════════════════════════
     sectionHeader('7 · TC-06: Updates[] / Quantity Change Checks');
+    await testGap(2000);
     // ════════════════════════════════════════════════════════════════════════
     if (productUrl) {
       // 7a: single product qty 1→3
@@ -904,7 +874,7 @@ async function runQA(RATES) {
       await safeGoto(productUrl, 'product (TC-06a)');
       await clickAddToCart(page);
       await safeGoto(cartUrl, 'cart (TC-06a)');
-      await waitForRouteWidget(page, 4000);
+      await waitForRouteWidget(page, 6000);
       // Increase qty to 3
       const inp6a = await page.$('input[name="updates[]"], input[class*="quantity"], input[type="number"][min]');
       if (inp6a) {
@@ -939,12 +909,12 @@ async function runQA(RATES) {
         await safeGoto(productUrl2, 'product 2 (TC-06b)');
         await clickAddToCart(page);
         await safeGoto(cartUrl, 'cart (TC-06b)');
-        await waitForRouteWidget(page, 4000);
+        await waitForRouteWidget(page, 6000);
         const inp6b = await page.$('input[name="updates[]"], input[class*="quantity"], input[type="number"][min]');
         if (inp6b) { await inp6b.fill('3'); await inp6b.press('Enter'); await page.waitForTimeout(1000); }
         const clicked6b = await clickCheckout();
         if (clicked6b) {
-          await page.waitForTimeout(4000);
+          await page.waitForTimeout(5000);
           if (/checkout|checkouts/i.test(page.url())) {
             await page.waitForTimeout(1500);
             const r6b = await getRouteCountAtCheckout();
@@ -960,6 +930,7 @@ async function runQA(RATES) {
 
     // ════════════════════════════════════════════════════════════════════════
     sectionHeader('8 · TC-08: Route Disappears with Digital-Only Cart');
+    await testGap(2000);
     // ════════════════════════════════════════════════════════════════════════
     {
       await clearCart();
@@ -986,8 +957,8 @@ async function runQA(RATES) {
       if (giftCardData?.id) {
         await addProductToCartApi(giftCardData.id);
         await safeGoto(cartUrl, 'cart (digital only)');
-        await waitForRouteWidget(page, 4000);
-        await page.waitForTimeout(500);
+        await waitForRouteWidget(page, 6000);
+        await page.waitForTimeout(1500);
         const widgetDigital = await findRouteWidget(page);
         log('TC-08 Digital-Only Cart', `Route widget absent for digital-only cart ("${giftCardData.title}")`,
           !widgetDigital.visible ? 'PASS' : 'FAIL',
@@ -1001,6 +972,7 @@ async function runQA(RATES) {
 
     // ════════════════════════════════════════════════════════════════════════
     sectionHeader('9 · TC-09: Physical + Digital — Premium on Physical Only');
+    await testGap(2000);
     // ════════════════════════════════════════════════════════════════════════
     if (productUrl) {
       await clearCart();
@@ -1022,8 +994,8 @@ async function runQA(RATES) {
       if (giftCardData2?.id) {
         await addProductToCartApi(giftCardData2.id);
         await safeGoto(cartUrl, 'cart (TC-09)');
-        await waitForRouteWidget(page, 4000);
-        await page.waitForTimeout(500);
+        await waitForRouteWidget(page, 6000);
+        await page.waitForTimeout(1500);
         const widgetMixed = await findRouteWidget(page);
         const priceMatch = widgetMixed.text?.match(/\$\s*([\d.]+)/);
         if (priceMatch && physicalSubtotal > 0) {
@@ -1048,13 +1020,14 @@ async function runQA(RATES) {
 
     // ════════════════════════════════════════════════════════════════════════
     sectionHeader('10 · TC-10: Route Product Auto-Removed from Cart');
+    await testGap(2000);
     // ════════════════════════════════════════════════════════════════════════
     if (productUrl) {
       await clearCart();
       await safeGoto(productUrl, 'product (TC-10)');
       await clickAddToCart(page);
       await safeGoto(cartUrl, 'cart (TC-10)');
-      await waitForRouteWidget(page, 4000);
+      await waitForRouteWidget(page, 6000);
       const countBefore = await getRouteLineItemCount(page);
 
       // Remove all physical items
@@ -1084,11 +1057,12 @@ async function runQA(RATES) {
 
     // ════════════════════════════════════════════════════════════════════════
     sectionHeader('11 · TC-11 + TC-12: Not on Storefront & Collections');
+    await testGap(2000);
     // ════════════════════════════════════════════════════════════════════════
     // TC-11: Route product not browsable on storefront
     const collectionsUrl = new URL('/collections/all?sort_by=price-ascending', BASE_URL).href;
     await safeGoto(collectionsUrl, 'collections (TC-11)');
-    await page.waitForTimeout(500);
+    await page.waitForTimeout(1500);
     const routeInColl = await page.evaluate(() => {
       const cards = document.querySelectorAll('a[href*="/products/"], [class*="product-card"], [class*="product-item"]');
       for (const c of cards) {
@@ -1120,14 +1094,15 @@ async function runQA(RATES) {
 
     // ════════════════════════════════════════════════════════════════════════
     sectionHeader('12 · TC-13+14: Value Prop & Info Modal');
+    await testGap(2000);
     // ════════════════════════════════════════════════════════════════════════
     if (productUrl) {
       await clearCart();
       await safeGoto(productUrl, 'product (TC-13)');
       await clickAddToCart(page);
       await safeGoto(cartUrl, 'cart (TC-13)');
-      await waitForRouteWidget(page, 5000);
-      await page.waitForTimeout(500);
+      await waitForRouteWidget(page, 6000);
+      await page.waitForTimeout(1500);
 
       const widget13 = await findRouteWidget(page);
       const hasPremiumText = /order protected for \$[\d.]+/i.test(widget13.text || '');
@@ -1193,14 +1168,15 @@ async function runQA(RATES) {
 
     // ════════════════════════════════════════════════════════════════════════
     sectionHeader('13 · TC-15: BFCache Check');
+    await testGap(2000);
     // ════════════════════════════════════════════════════════════════════════
     if (productUrl) {
       await clearCart();
       await safeGoto(productUrl, 'product (BFCache)');
       await clickAddToCart(page);
       await safeGoto(cartUrl, 'cart (BFCache)');
-      await waitForRouteWidget(page, 4000);
-      await page.waitForTimeout(500);
+      await waitForRouteWidget(page, 6000);
+      await page.waitForTimeout(1500);
 
       const routeBefore = await getRouteLineItemCount(page);
       if (routeBefore > 0) {
@@ -1234,6 +1210,7 @@ async function runQA(RATES) {
 
     // ════════════════════════════════════════════════════════════════════════
     sectionHeader('14 · Design Checks (Non-Functional)');
+    await testGap(2000);
     // ════════════════════════════════════════════════════════════════════════
     if (productUrl) {
       await clearCart();
@@ -1243,7 +1220,7 @@ async function runQA(RATES) {
       // Mobile alignment
       await page.setViewportSize({ width: 375, height: 812 });
       await safeGoto(cartUrl, 'cart (mobile design)');
-      await waitForRouteWidget(page, 4000);
+      await waitForRouteWidget(page, 6000);
       const mobileWidget = await findRouteWidget(page);
       if (mobileWidget.found) {
         log('Design', 'Widget not overflowing mobile viewport (375px)',
