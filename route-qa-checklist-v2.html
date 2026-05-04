@@ -234,22 +234,38 @@ main{max-width:860px;margin:0 auto;padding:0 24px 60px;display:none}
 .fr-fail-detail{font-size:13px;color:#636366;margin-bottom:8px}
 .fr-fix{background:#fff;border-left:3px solid #ff3b30;padding:10px 14px;border-radius:0 8px 8px 0;font-size:13px;color:#1d1d1f;line-height:1.6}
 .fr-fix::before{content:'💡 ';font-style:normal}
-/* All results */
-.fr-section{background:#fff;border:1px solid #e2e2ea;border-radius:12px;margin-bottom:12px;overflow:hidden}
-.fr-section-hdr{background:#fafafa;padding:12px 18px;font-size:13px;font-weight:700;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid #f0f0f5;cursor:pointer;user-select:none}
-.fr-section-hdr:hover{background:#f0f0f5}
-.fr-section-badge{font-size:11px;font-weight:600;padding:2px 10px;border-radius:8px}
-.fr-section-badge.all-pass{background:#e8f8f0;color:#1a7a4a}
-.fr-section-badge.has-fail{background:#ffeaea;color:#c0392b}
-.fr-section-badge.has-warn{background:#fffbe6;color:#b07d00}
+/* All results — section headers big + bold */
+.fr-section{background:#fff;border:1px solid #e2e2ea;border-radius:14px;margin-bottom:16px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,.04)}
+.fr-section-hdr{
+  background:linear-gradient(90deg,#1a1a2e 0%,#2a2a4e 100%);
+  padding:14px 20px;font-size:14px;font-weight:800;
+  color:#fff;display:flex;align-items:center;justify-content:space-between;
+  cursor:pointer;user-select:none;letter-spacing:.3px;
+}
+.fr-section-hdr:hover{opacity:.92}
+.fr-section-badge{font-size:12px;font-weight:700;padding:3px 12px;border-radius:20px;flex-shrink:0}
+.fr-section-badge.all-pass{background:#34c759;color:#fff}
+.fr-section-badge.has-fail{background:#ff3b30;color:#fff}
+.fr-section-badge.has-warn{background:#ffcc00;color:#1a1a2e}
 .fr-section-body{display:block}
-.fr-row{padding:10px 18px;border-top:1px solid #f5f5f7;display:flex;align-items:flex-start;gap:10px;font-size:13px}
-.fr-row-icon{flex-shrink:0;margin-top:1px}
-.fr-row-content{flex:1}
-.fr-row-name{font-weight:500;color:#1d1d1f}
-.fr-row-detail{font-size:12px;color:#636366;margin-top:2px}
+/* Result rows with animated indicator + screenshot */
+.fr-row{padding:0;border-top:1px solid #f0f0f5;display:grid;grid-template-columns:auto 1fr 110px;align-items:stretch}
+.fr-row-indicator{width:52px;display:flex;align-items:center;justify-content:center;flex-shrink:0;padding:12px 0}
+.fr-row-indicator .ri-pass{width:24px;height:24px;border-radius:50%;background:#34c759;display:flex;align-items:center;justify-content:center;animation:rdPop .4s ease;position:relative}
+.fr-row-indicator .ri-pass::after{content:'';position:absolute;inset:-3px;border-radius:50%;border:2px solid rgba(52,199,89,.35);animation:rdSpin 2.5s linear infinite}
+.fr-row-indicator .ri-fail{width:24px;height:24px;border-radius:50%;background:#ff3b30;display:flex;align-items:center;justify-content:center;animation:rdShake .5s ease,rdPulseRed 2s ease 1s infinite}
+.fr-row-indicator .ri-warn{width:24px;height:24px;border-radius:50%;background:#ffcc00;display:flex;align-items:center;justify-content:center}
+.fr-row-indicator .ri-info{width:24px;height:24px;border-radius:50%;background:#e8f0fe;display:flex;align-items:center;justify-content:center}
+.fr-row-indicator svg{width:13px;height:13px}
+.fr-row-content{padding:12px 14px 12px 0;flex:1}
+.fr-row-name{font-weight:600;color:#1d1d1f;font-size:13px}
+.fr-row-detail{font-size:12px;color:#636366;margin-top:3px}
 .fr-row.fail .fr-row-name{color:#c0392b}
 .fr-row.warn .fr-row-name{color:#b07d00}
+.fr-row-ss{border-left:1px solid #f0f0f5;background:#fafafa;overflow:hidden;display:flex;align-items:center;justify-content:center}
+.fr-row-ss img{width:110px;height:100%;object-fit:cover;object-position:top;cursor:zoom-in;display:block}
+.fr-row-ss img:hover{opacity:.85}
+.fr-row-ss .fr-no-ss{font-size:9px;color:#c7c7cc;text-align:center;padding:6px}
 /* Meta bar */
 .fr-meta{background:#f5f5f7;border:1px solid #e2e2ea;border-radius:10px;padding:12px 18px;font-size:12px;color:#636366;margin-bottom:20px;display:flex;flex-wrap:wrap;gap:12px}
 .fr-meta strong{color:#1d1d1f}
@@ -849,14 +865,23 @@ function showFinalReport(data) {
       </div>
       <div class="fr-section-body" id="${secId}">`;
     items.forEach(r => {
-      const icons = { PASS:'✅', FAIL:'❌', WARN:'⚠️', INFO:'ℹ️' };
       const cls = (r.status || '').toLowerCase();
+      const INDIC = {
+        PASS: `<div class="ri-pass"><svg viewBox="0 0 13 13" fill="none"><path d="M2 6.5l3 3 6-6" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg></div>`,
+        FAIL: `<div class="ri-fail"><svg viewBox="0 0 13 13" fill="none"><path d="M3 3l7 7M10 3l-7 7" stroke="#fff" stroke-width="2" stroke-linecap="round"/></svg></div>`,
+        WARN: `<div class="ri-warn"><svg viewBox="0 0 13 13" fill="none"><path d="M6.5 4v3.5M6.5 9.5v.5" stroke="#1a1a2e" stroke-width="2.2" stroke-linecap="round"/></svg></div>`,
+        INFO: `<div class="ri-info"><svg viewBox="0 0 13 13" fill="none"><circle cx="6.5" cy="6.5" r="1" fill="#0071e3"/><path d="M6.5 8V6" stroke="#0071e3" stroke-width="1.8" stroke-linecap="round"/></svg></div>`,
+      };
+      const ssHTML = r.screenshot
+        ? `<div class="fr-row-ss"><img src="${r.screenshot}" onclick="var w=window.open();w.document.write('<html><body style=\\'margin:0;background:#000\\'><img src=\\''+this.src+'\\'style=\\'max-width:100%;display:block\\'></body></html>')" /></div>`
+        : `<div class="fr-row-ss"><div class="fr-no-ss">📷</div></div>`;
       html += `<div class="fr-row ${cls}">
-        <div class="fr-row-icon">${icons[r.status] || 'ℹ️'}</div>
+        <div class="fr-row-indicator">${INDIC[r.status] || INDIC.INFO}</div>
         <div class="fr-row-content">
           <div class="fr-row-name">${escHtml(r.name)}</div>
           ${r.detail ? `<div class="fr-row-detail">→ ${escHtml(r.detail)}</div>` : ''}
         </div>
+        ${ssHTML}
       </div>`;
     });
     html += '</div></div>';
@@ -871,8 +896,9 @@ function showFinalReport(data) {
     manualResults.forEach(r => {
       const icons = { PASS:'✅', FAIL:'❌', NA:'—' };
       html += `<div class="fr-row">
-        <div class="fr-row-icon">${icons[r.status] || '⬜'}</div>
-        <div class="fr-row-content"><div class="fr-row-name">${r.name}</div></div>
+        <div class="fr-row-indicator" style="padding:12px">${icons[r.status] || '⬜'}</div>
+        <div class="fr-row-content" style="padding:12px 14px 12px 0"><div class="fr-row-name">${r.name}</div></div>
+        <div class="fr-row-ss"><div class="fr-no-ss">Manual</div></div>
       </div>`;
     });
     html += '</div></div>';

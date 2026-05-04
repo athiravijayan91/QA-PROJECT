@@ -1008,21 +1008,25 @@ async function runQA(RATES) {
   }
 
   // ── Helper: collect candidate product URLs (up to 15) ────────────────────
+  // These handles indicate non-physical / Route-internal products — never use as test products
+  const SKIP_HANDLES = /route|gift.?card|giftcard|shipping.?protect|protection|digital|e.?gift|voucher|certificate/i;
+
   async function collectProductLinks() {
     await safeGoto(BASE_URL, 'homepage');
     await closePopups();
     let links = await page.$$eval('a[href*="/products/"]',
-      els => [...new Set(els.map(e => e.href))]
-        .filter(h => !h.includes('/collections') && !h.includes('route'))
+      els => [...new Set(els.map(e => e.href))].filter(h => !h.includes('/collections'))
     );
     // Always also try /collections/all for more candidates
     await safeGoto(new URL('/collections/all', BASE_URL).href, 'collections/all');
     await closePopups();
     const collLinks = await page.$$eval('a[href*="/products/"]',
-      els => [...new Set(els.map(e => e.href))].filter(h => !h.includes('route'))
+      els => [...new Set(els.map(e => e.href))]
     );
-    // Merge + dedupe, limit to 15
-    const all = [...new Set([...links, ...collLinks])].slice(0, 15);
+    // Merge + dedupe, strip digital/Route products, limit to 20
+    const all = [...new Set([...links, ...collLinks])]
+      .filter(h => !SKIP_HANDLES.test(h))
+      .slice(0, 20);
     return all;
   }
 
@@ -1042,6 +1046,30 @@ async function runQA(RATES) {
     for (const url of candidates) {
       if (found >= 2) break;
       try {
+        // Quick API check: confirm product is physical (requires_shipping) before visiting page
+        const handle = url.split('/products/')[1]?.split('?')[0]?.split('#')[0];
+        if (handle) {
+          const isPhysical = await page.evaluate(async (h) => {
+            try {
+              const r = await fetch(`/products/${h}.js`);
+              if (!r.ok) return true; // assume physical if can't check
+              const p = await r.json();
+              if (p.gift_card) return false; // definitely digital
+              // If all variants have requires_shipping === false, it's digital
+              const variants = p.variants || [];
+              if (variants.length > 0 && variants.every(v => v.requires_shipping === false)) return false;
+              return true;
+            } catch(_) { return true; }
+          }, handle);
+          if (!isPhysical) {
+            sseEmit('result', {
+              section: 'Setup', name: 'Product skipped (digital/gift card — not eligible for Route)',
+              status: 'INFO', detail: url
+            });
+            continue;
+          }
+        }
+
         await safeGoto(url, 'checking product');
         await closePopups();
         await page.waitForTimeout(1500); // let page settle
