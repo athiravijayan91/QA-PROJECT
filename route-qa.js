@@ -26,6 +26,31 @@ function sseEmit(event, data) {
   _sseClients.forEach(res => { try { res.write(payload); } catch (_) {} });
 }
 
+// Position windows side by side:
+// - Chrome window showing localhost:3000  → RIGHT half  {960, 0, 1920, 1080}
+// - Any other Chrome window (Playwright)  → LEFT half   {0, 0, 960, 1080}
+// Uses URL-based detection so it works regardless of which window is "front".
+function positionWindowsSideBySide() {
+  if (process.platform !== 'darwin') return;
+  const { execSync } = require('child_process');
+  try {
+    execSync(`osascript << 'EOF'
+tell application "Google Chrome"
+  repeat with w in windows
+    try
+      set u to (URL of active tab of w) as string
+      if u contains "localhost:3000" then
+        set bounds of w to {960, 0, 1920, 1080}
+      else
+        set bounds of w to {0, 0, 960, 1080}
+      end if
+    end try
+  end repeat
+end tell
+EOF`);
+  } catch (_) {}
+}
+
 function startLiveServer() {
   let _uiStartResolve = null;
   const uiStartPromise = new Promise(resolve => { _uiStartResolve = resolve; });
@@ -96,25 +121,9 @@ function startLiveServer() {
     try {
       const { execSync } = require('child_process');
       if (process.platform === 'darwin') {
-        // Open dashboard and position it on the right half of the screen
-        execSync(`open http://localhost:3000`);
-        setTimeout(() => {
-          try {
-            execSync(`osascript -e '
-              tell application "Google Chrome"
-                activate
-                set bounds of front window to {960, 0, 1920, 1080}
-              end tell'`);
-          } catch(_) {
-            try {
-              execSync(`osascript -e '
-                tell application "Safari"
-                  activate
-                  set bounds of front window to {960, 0, 1920, 1080}
-                end tell'`);
-            } catch(_) {}
-          }
-        }, 1500);
+        // Open dashboard in Chrome and position it on the RIGHT half of the screen
+        execSync(`open -a "Google Chrome" http://localhost:3000`);
+        setTimeout(() => positionWindowsSideBySide(), 2000);
       } else {
         const openCmd = process.platform === 'win32' ? 'start' : 'xdg-open';
         execSync(`${openCmd} http://localhost:3000`);
@@ -449,6 +458,12 @@ async function runQA(RATES) {
   } catch (_) {
     browser = await chromium.launch({ headless: HEADLESS, slowMo: HEADLESS ? 0 : 100, args: windowArgs });
     console.log('  🌐  Using bundled Chromium');
+  }
+  // Re-position both windows now that Playwright's browser is open:
+  // dashboard stays right, test browser goes left
+  if (!HEADLESS) {
+    await new Promise(r => setTimeout(r, 1500)); // let Playwright window open
+    positionWindowsSideBySide();
   }
 
   const context = await browser.newContext({
