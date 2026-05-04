@@ -485,7 +485,7 @@ async function runQA(RATES) {
   }
 
   const context = await browser.newContext({
-    viewport: { width: 960, height: 1040 }, // left half of screen
+    viewport: { width: 960, height: 1200 }, // left half of screen, tall enough to show widget area
     userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
     locale: 'en-US',
     timezoneId: 'America/New_York',
@@ -506,11 +506,22 @@ async function runQA(RATES) {
   const page = await context.newPage();
 
   // ── Screenshot helper ─────────────────────────────────────────────────────
-  // snap() stores the screenshot in _nextScreenshot (module-level).
-  // The next log() call with PASS/FAIL/WARN automatically picks it up and clears it.
+  // Scrolls the Route widget into view before screenshotting so it's always visible.
   async function snap() {
     try {
-      const buf = await page.screenshot({ type: 'jpeg', quality: 25, fullPage: false });
+      // Scroll Route widget into center of viewport
+      await page.evaluate(() => {
+        const sel = [
+          '[data-route-widget]', '[class*="route-widget"]', '[data-route-modal]',
+          '[class*="route-modal"]', '[id*="route-widget"]',
+          // Preferred Checkout value prop text
+          '[data-route-cloned-button]',
+        ].join(', ');
+        const el = document.querySelector(sel);
+        if (el) el.scrollIntoView({ behavior: 'instant', block: 'center' });
+      }).catch(() => {});
+      await page.waitForTimeout(400); // let scroll settle
+      const buf = await page.screenshot({ type: 'jpeg', quality: 35, fullPage: false });
       _nextScreenshot = 'data:image/jpeg;base64,' + buf.toString('base64');
     } catch(_) { _nextScreenshot = null; }
   }
@@ -1288,7 +1299,7 @@ async function runQA(RATES) {
       log('TC-03 Premium Calculation',
         `${tierLabel} — subtotal $${subtotal.toFixed(2)} (${inLower ? 'lower' : 'upper'} tier @ ${fmt === 'flat' ? '$'+rate+' flat' : rate+'%'})`,
         'INFO',
-        `Raw: $${rawPremium.toFixed(4)} → Expected variant: $${expectedVariant?.toFixed(2) ?? '(above table)'}  |  Route in cart: $${actualPremium?.toFixed(2) ?? 'not found'}`);
+        `Raw: $${rawPremium.toFixed(4)} → Expected variant: $${expectedVariant?.toFixed(2) ?? '(above table)'}${actualPremium !== null ? ' | Route in cart: $'+actualPremium.toFixed(2) : ''}`);
 
       // Check 1: Route line item in /cart.js (most reliable)
       if (actualPremium !== null) {
