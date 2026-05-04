@@ -211,6 +211,9 @@ function getFix(section, name) {
 const results = [];
 const startTime = Date.now();
 
+// Module-level screenshot slot — set by snap() inside runQA(), consumed by log()
+let _nextScreenshot = null;
+
 function log(section, name, status, detail = '', tcId = null) {
   // Consume any pending screenshot (set by snap() before this call)
   // Screenshots are attached to PASS / FAIL / WARN results only
@@ -503,9 +506,8 @@ async function runQA(RATES) {
   const page = await context.newPage();
 
   // ── Screenshot helper ─────────────────────────────────────────────────────
-  // snap() stores the screenshot in _nextScreenshot.
+  // snap() stores the screenshot in _nextScreenshot (module-level).
   // The next log() call with PASS/FAIL/WARN automatically picks it up and clears it.
-  let _nextScreenshot = null;
   async function snap() {
     try {
       const buf = await page.screenshot({ type: 'jpeg', quality: 25, fullPage: false });
@@ -1512,9 +1514,13 @@ async function runQA(RATES) {
       });
 
       // ── Helper: get current cart subtotal from /cart.js ─────────────────
-      const getCartSubtotal = async () => page.evaluate(() =>
-        fetch('/cart.js').then(r => r.json()).then(c => c.total_price / 100).catch(() => 0)
-      );
+      const getCartSubtotal = async () => {
+        // Wait for any in-progress navigation to settle before evaluating
+        try { await page.waitForLoadState('domcontentloaded', { timeout: 5000 }); } catch(_) {}
+        return page.evaluate(() =>
+          fetch('/cart.js').then(r => r.json()).then(c => c.total_price / 100).catch(() => 0)
+        ).catch(() => 0);
+      };
 
       // ── Helper: checkout and verify Route ──────────────────────────────
       const checkoutAndVerifyRoute = async (label, subContext) => {
@@ -1600,11 +1606,19 @@ async function runQA(RATES) {
         }
 
         // Wait for cart to recalculate — up to 6s polling every 500ms
+        // Wrapped in try/catch in case a navigation destroys the page context
         let newSubtotal = oldSubtotal;
         for (let attempt = 0; attempt < 12; attempt++) {
           await page.waitForTimeout(500);
-          newSubtotal = await getCartSubtotal();
-          if (newSubtotal !== oldSubtotal) break;
+          try {
+            newSubtotal = await getCartSubtotal();
+            if (newSubtotal !== oldSubtotal) break;
+          } catch(_) {
+            // Page navigated — wait for it to settle and retry once
+            await page.waitForLoadState('domcontentloaded', { timeout: 6000 }).catch(() => {});
+            newSubtotal = await getCartSubtotal().catch(() => oldSubtotal);
+            break;
+          }
         }
 
         // Check for max qty error message

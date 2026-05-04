@@ -341,18 +341,9 @@ main{max-width:860px;margin:0 auto;padding:0 24px 60px;display:none}
   <div class="config-card">
     <h2>🔒 Protection Rule Set</h2>
 
-    <!-- Rate type -->
-    <div class="form-group" style="margin-bottom:16px">
-      <label>Rate type *</label>
-      <div style="display:flex;gap:12px;margin-top:4px">
-        <label style="display:flex;align-items:center;gap:7px;font-size:14px;font-weight:500;color:#1d1d1f;text-transform:none;letter-spacing:0;cursor:pointer;padding:7px 14px;border:1px solid #d1d1d6;border-radius:8px;background:#fff">
-          <input type="radio" name="rate-type" id="rate-static" value="static" checked style="width:auto;padding:0;border:none"> Static rate
-        </label>
-        <label style="display:flex;align-items:center;gap:7px;font-size:14px;font-weight:500;color:#1d1d1f;text-transform:none;letter-spacing:0;cursor:pointer;padding:7px 14px;border:1px solid #d1d1d6;border-radius:8px;background:#fff">
-          <input type="radio" name="rate-type" id="rate-dynamic" value="dynamic" style="width:auto;padding:0;border:none"> Dynamic rate
-        </label>
-      </div>
-      <div style="margin-top:8px;font-size:12px;color:#636366" id="rate-type-note">Static: one flat rate applies to all order values.</div>
+    <!-- Premium rates note -->
+    <div style="margin-bottom:14px;font-size:12px;color:#636366;background:#f5f5f7;border-radius:8px;padding:10px 14px">
+      Fill in the rate and format for each order value tier. Leave the second row blank if the merchant uses a single flat rate for all orders.
     </div>
 
     <!-- Rule set table -->
@@ -507,20 +498,9 @@ document.querySelectorAll('input[name="platform"]').forEach(r => r.addEventListe
 }));
 
 // ── Rate type toggle ───────────────────────────────────────────────────────
-document.querySelectorAll('input[name="rate-type"]').forEach(r => r.addEventListener('change', function() {
-  const isDynamic = this.value === 'dynamic';
-  const tier2 = document.getElementById('tier2-row');
-  tier2.style.opacity = isDynamic ? '1' : '0.4';
-  tier2.style.pointerEvents = isDynamic ? 'auto' : 'none';
-  document.getElementById('rate-type-note').textContent = isDynamic
-    ? 'Dynamic: different rates apply per order subtotal tier.'
-    : 'Static: one flat rate applies to all order values regardless of cart total.';
-}));
+// rate-type toggle removed — tier2 rate is always read now
 
 function getRateConfig() {
-  const rateTypeEl = document.querySelector('input[name="rate-type"]:checked');
-  const isDynamic  = rateTypeEl ? rateTypeEl.value === 'dynamic' : false;
-
   const g = id => document.getElementById(id);
   const v = id => g(id)?.value || '';
 
@@ -531,13 +511,15 @@ function getRateConfig() {
   const t1Default= document.querySelector('input[name="tier1-default"]:checked')?.value || 'on';
   const t1PaidBy = v('tier1-paidby')             || 'customer';
 
-  const t2Rate   = isDynamic ? (parseFloat(v('tier2-rate'))  || null) : null;
+  // Always read tier2 rate — no static/dynamic gate
+  const t2Rate   = parseFloat(v('tier2-rate'))   || null;
   const t2Format = v('tier2-rate-type')          || 'pct';
   const t2Min    = parseFloat(v('tier2-min'))     || 100;
   const t2Max    = parseFloat(v('tier2-max'))     || 5000;
   const t2Default= document.querySelector('input[name="tier2-default"]:checked')?.value || 'off';
   const t2PaidBy = v('tier2-paidby')             || 'customer';
 
+  const isDynamic = t2Rate !== null; // infer: two tiers = dynamic pricing
   const limit    = parseFloat(v('cfg-covlimit'))  || 5000;
   return { isDynamic, t1Rate, t1Format, t1Min, t1Max, t1Default, t1PaidBy,
            t2Rate, t2Format, t2Min, t2Max, t2Default, t2PaidBy, limit };
