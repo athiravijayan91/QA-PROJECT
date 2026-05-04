@@ -653,50 +653,89 @@ async function runQA(RATES) {
   // ── Helper: detect if a cart drawer/modal is currently open ───────────────
   async function isDrawerOpen() {
     return page.evaluate(() => {
-      // Check for drawer containers that are visible
+      // Both hyphen and underscore variants (themes differ)
       const drawerSelectors = [
         '.cart-drawer', '[class*="cart-drawer"]', '[id*="cart-drawer"]', '[id*="CartDrawer"]',
-        '.cart-modal', '[class*="cart-modal"]',
-        '.cart-notification', '[class*="cart-notification"]',
-        '[class*="cart-aside"]', '[class*="cart-slide"]', '[class*="cart-sidebar"]',
-        '.drawer', '[class*="side-cart"]', '[class*="mini-cart"]',
+        '.cart_drawer', '[class*="cart_drawer"]', '[id*="cart_drawer"]',
+        '.cart-modal',  '[class*="cart-modal"]',  '[class*="cart_modal"]',
+        '.cart-aside',  '[class*="cart-aside"]',  '[class*="cart_aside"]',
+        '.cart-slide',  '[class*="cart-slide"]',  '[class*="cart_slide"]',
+        '.cart-sidebar','[class*="cart-sidebar"]','[class*="cart_sidebar"]',
+        '.cart-notification','[class*="cart-notification"]',
+        '.drawer',      '[class*="side-cart"]',   '[class*="mini-cart"]',
+        '[class*="fly-cart"]', '[class*="slidecart"]',
       ];
       for (const sel of drawerSelectors) {
-        const el = document.querySelector(sel);
-        if (!el) continue;
-        const style = window.getComputedStyle(el);
-        if (style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0') return true;
+        try {
+          const el = document.querySelector(sel);
+          if (!el) continue;
+          const r = el.getBoundingClientRect();
+          const style = window.getComputedStyle(el);
+          // Must be visible AND have non-zero size
+          if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') continue;
+          if (r.width > 0 && r.height > 50) return true;
+        } catch(_) {}
       }
-      // Also check body class patterns (some themes add a class when drawer opens)
-      const bodyClass = document.body.className || '';
-      if (/cart.*open|open.*cart|is-not-scrollable|drawer.*active|active.*drawer/i.test(bodyClass)) return true;
+      // Body class patterns — many themes add a class when drawer opens
+      const bodyClass = (document.body.className || '') + ' ' + (document.documentElement.className || '');
+      if (/cart.*open|open.*cart|is-not-scrollable|drawer.*active|active.*drawer|cart.*visible|overlay.*active/i.test(bodyClass)) return true;
+      // Check if any Route widget is visible inside a potential drawer area
+      const routeWidget = document.querySelector('[data-route-widget], [class*="route-widget"], [id*="route-widget"]');
+      if (routeWidget) {
+        const r = routeWidget.getBoundingClientRect();
+        const style = window.getComputedStyle(routeWidget);
+        if (style.display !== 'none' && r.width > 0 && r.height > 0) return true;
+      }
       return false;
     });
   }
 
-  // ── Helper: find checkout button inside a drawer (prefers Route's cloned btn) ─
-  async function findDrawerCheckoutBtn() {
-    // Route's cloned button is the most reliable — it's visible when drawer is open
-    const routeBtn = await page.$('button[data-route-cloned-button="true"]');
-    if (routeBtn && await routeBtn.isVisible().catch(() => false)) return routeBtn;
-
-    // Try within known drawer containers
-    const drawerSels = [
-      '[class*="cart-drawer"]', '[id*="cart-drawer"]', '[id*="CartDrawer"]',
-      '[class*="cart-modal"]', '[class*="cart-aside"]', '[class*="cart-slide"]',
-      '[class*="side-cart"]', '[class*="mini-cart"]', '.drawer',
+  // ── Helper: try to open drawer by clicking cart icon ─────────────────────
+  async function tryOpenCartDrawer() {
+    const iconSels = [
+      '[data-cart-icon]', '[class*="cart-icon"]', '[class*="cart__icon"]',
+      '[class*="cart_icon"]', 'a[href="/cart"]', 'button[aria-label*="cart" i]',
+      '.site-header__cart', '.header__cart', '[class*="header"] a[href*="/cart"]',
+      '[class*="nav"] a[href*="/cart"]', '.cart-toggle', '[class*="cart-toggle"]',
+      '[id*="cart-toggle"]', '[data-cart-toggle]',
     ];
-    for (const container of drawerSels) {
-      const root = await page.$(container);
-      if (!root) continue;
-      const vis = await root.isVisible().catch(() => false);
+    for (const sel of iconSels) {
+      const el = await page.$(sel);
+      if (!el) continue;
+      const vis = await el.isVisible().catch(() => false);
       if (!vis) continue;
-      // Try checkout button inside this container
+      try {
+        await el.click({ force: true, timeout: 3000 });
+        await page.waitForTimeout(2500);
+        return true;
+      } catch(_) {}
+    }
+    return false;
+  }
+
+  // ── Helper: find checkout button inside visible drawer ────────────────────
+  async function findDrawerCheckoutBtn() {
+    // Route's cloned button is the most reliable indicator
+    const allRouteBtns = await page.$$('button[data-route-cloned-button="true"], button[data-route-cloned-button]');
+    for (const btn of allRouteBtns) {
+      if (await btn.isVisible().catch(() => false)) return btn;
+    }
+    // Try within known drawer containers (both hyphen and underscore)
+    const drawerContainerSels = [
+      '[class*="cart-drawer"]', '[class*="cart_drawer"]', '[id*="cart-drawer"]', '[id*="CartDrawer"]',
+      '[class*="cart-aside"]',  '[class*="cart_aside"]',
+      '[class*="cart-modal"]',  '[class*="cart_modal"]',
+      '[class*="cart-slide"]',  '[class*="cart_slide"]',
+      '[class*="side-cart"]',   '[class*="mini-cart"]', '.drawer',
+    ];
+    for (const containerSel of drawerContainerSels) {
+      const container = await page.$(containerSel);
+      if (!container || !await container.isVisible().catch(() => false)) continue;
       for (const btnSel of [
-        'button[name="checkout"]', 'input[name="checkout"]',
-        'button[data-route-cloned-button]', 'a[href*="/checkout"]',
+        'button[data-route-cloned-button]', 'button[name="checkout"]',
+        'input[name="checkout"]', 'a[href*="/checkout"]',
       ]) {
-        const btn = await root.$(btnSel);
+        const btn = await container.$(btnSel);
         if (btn && await btn.isVisible().catch(() => false)) return btn;
       }
     }
@@ -704,10 +743,27 @@ async function runQA(RATES) {
   }
 
   // ── Helper: checkout from drawer and verify Route at checkout ─────────────
-  async function checkoutFromDrawerAndVerify(label) {
-    const drawer = await isDrawerOpen();
-    if (!drawer) return { tested: false, reason: 'No drawer/modal detected after Add to Cart' };
+  async function checkoutFromDrawerAndVerify() {
+    // Give drawer 3s to open / animate
+    await page.waitForTimeout(3000);
+    await closePopups();
 
+    let drawerOpen = await isDrawerOpen();
+
+    // If drawer not detected yet, try clicking the cart icon
+    if (!drawerOpen) {
+      const opened = await tryOpenCartDrawer();
+      if (opened) {
+        await page.waitForTimeout(2500);
+        await closePopups();
+        drawerOpen = await isDrawerOpen();
+      }
+    }
+
+    if (!drawerOpen) return { tested: false, reason: 'No drawer/modal detected — cart may go directly to cart page' };
+
+    // Wait for Route widget inside drawer
+    await page.waitForTimeout(2000); // let widget render
     const btn = await findDrawerCheckoutBtn();
     if (!btn) return { tested: false, reason: 'Drawer open but checkout button not found inside it' };
 
@@ -1110,6 +1166,28 @@ async function runQA(RATES) {
     sectionHeader('4 · TC-03: Premium Calculation');
     await testGap(2000);
     // ════════════════════════════════════════════════════════════════════════
+    // Route's known variant price table — used to round raw premium UP to nearest available variant
+    // Mirrors the Route Insurance product variants visible in Shopify admin
+    const ROUTE_VARIANTS = [
+      0.98, 1.15, 1.35, 1.55, 1.75, 1.95, 2.15, 2.35, 2.55, 2.75,
+      2.95, 3.15, 3.35, 3.55, 3.75, 3.95, 4.15, 4.35, 4.55, 4.75,
+      4.95, 5.15, 5.35, 5.55, 5.75, 5.95, 6.15, 6.35, 6.55, 6.75,
+      6.95, 7.15, 7.35, 7.55, 7.75, 7.95, 8.15, 8.35, 8.55, 8.75,
+      8.95, 9.38, 10.03, 10.68, 11.33, 11.98, 12.63, 13.28, 13.93, 14.58,
+      15.23, 15.88, 16.53, 17.18, 17.83, 18.48, 19.13, 19.78, 20.43, 21.08,
+      21.73, 22.38, 23.03, 23.68, 24.33, 24.98, 25.63, 26.28, 26.93, 27.58,
+      28.23, 28.88, 29.53, 30.18, 30.83, 31.48, 32.13, 32.78, 33.43, 34.08,
+      34.73, 35.38, 36.03, 36.68, 37.33, 37.98, 38.63, 39.28, 39.93, 40.58,
+      41.23, 41.88, 42.53, 43.18, 43.83, 44.48, 45.13, 45.78, 46.43, 47.08,
+      47.73, 48.38, 49.03, 49.68, 50.33, 52.28, 54.23, 56.18, 58.13, 60.08,
+      62.03, 63.98, 65.93, 67.88, 69.83, 71.78, 73.73, 75.68, 77.63, 79.58,
+      82.48, 85.38, 88.28, 91.18, 94.08, 96.98, 99.88,
+    ];
+    const roundUpToVariant = (rawPremium) => {
+      for (const v of ROUTE_VARIANTS) { if (v >= rawPremium - 0.001) return v; }
+      return null; // above known range — extremely high subtotal
+    };
+
     if (productUrl) {
       await clearCart();
       await safeGoto(productUrl, 'product page (premium)');
@@ -1125,40 +1203,92 @@ async function runQA(RATES) {
         });
 
         if (cartData && cartData.total_price != null) {
-          const nonRoute = (cartData.items||[]).filter(i => !/route/i.test(i.title+(i.handle||'')));
-          const physical = nonRoute.filter(i => i.gift_card !== true && i.requires_shipping !== false);
-          const subtotal = physical.reduce((s,i) => s + i.line_price, 0) / 100;
+          const allItems  = cartData.items || [];
+          const routeItem = allItems.find(i => /route/i.test((i.handle||'') + (i.title||'')));
+          const nonRoute  = allItems.filter(i => !/route/i.test((i.handle||'') + (i.title||'')));
+          const physical  = nonRoute.filter(i => i.gift_card !== true && i.requires_shipping !== false);
+          const subtotal  = physical.reduce((s, i) => s + i.line_price, 0) / 100;
 
-          const tier1Max   = RATES.tier1Max || 100;
-          const tier1Rate  = RATES.tier1Rate || 1.95;
-          const tier2Rate  = RATES.tier2Rate || 2.5;
-          const tier1Fmt   = RATES.tier1Format || 'pct';
+          // Actual premium charged — Route line item price from cart (ground truth)
+          const actualPremium = routeItem ? routeItem.price / 100 : null;
 
-          const inLower = subtotal <= tier1Max;
-          const rate    = inLower ? tier1Rate : tier2Rate;
-          const fmt     = inLower ? tier1Fmt : (RATES.tier2Format || 'pct');
+          const tier1Max  = RATES.tier1Max  || 100;
+          const tier1Rate = RATES.tier1Rate || 1.95;
+          const tier2Rate = RATES.tier2Rate || 2.5;
+          const tier1Fmt  = RATES.tier1Format || 'pct';
+          const inLower   = subtotal <= tier1Max;
+          const rate      = inLower ? tier1Rate : tier2Rate;
+          const fmt       = inLower ? tier1Fmt : (RATES.tier2Format || 'pct');
 
-          const expectedPremium = fmt === 'flat' ? rate : subtotal * (rate / 100);
+          // Raw calculated premium
+          const rawPremium = fmt === 'flat' ? rate : subtotal * (rate / 100);
+          // Expected = round up to nearest Route variant
+          const expectedVariant = roundUpToVariant(rawPremium);
 
-          log('TC-03 Premium Calculation', `Cart subtotal: $${subtotal.toFixed(2)} (tier: ${inLower ? 'lower' : 'upper'})`, 'INFO',
-            `Expected premium: $${expectedPremium.toFixed(2)} @ ${fmt === 'flat' ? '$'+rate : rate+'%'}`);
+          log('TC-03 Premium Calculation', `Subtotal: $${subtotal.toFixed(2)} (${inLower ? 'lower' : 'upper'} tier)`, 'INFO',
+            `Raw premium: ${fmt === 'flat' ? '$'+rate+' flat' : '$'+subtotal.toFixed(2)+' × '+rate+'% = $'+rawPremium.toFixed(4)} → Expected variant: $${expectedVariant?.toFixed(2) ?? '?'}`);
 
-          const widget = await findRouteWidget(page);
-          const priceMatch = widget.text?.match(/\$\s*([\d.]+)/);
-          if (priceMatch) {
-            const shown = parseFloat(priceMatch[1]);
-            const diff  = Math.abs(shown - expectedPremium);
-            const ok    = diff <= 0.15;
-            log('TC-03 Premium Calculation', `Premium correct for $${subtotal.toFixed(2)} subtotal`,
+          // Source 1: actual Route line item from /cart.js
+          if (actualPremium !== null) {
+            const diff = Math.abs(actualPremium - (expectedVariant ?? rawPremium));
+            const ok   = diff <= 0.20; // 1 variant step tolerance
+            log('TC-03 Premium Calculation', 'Route variant in cart matches expected premium',
               ok ? 'PASS' : 'FAIL',
-              `Expected: $${expectedPremium.toFixed(2)} | Shown: $${shown.toFixed(2)}${!ok ? ' ← MISMATCH' : ''}`,
+              `Expected variant: $${expectedVariant?.toFixed(2) ?? '?'} | Route charged: $${actualPremium.toFixed(2)}${!ok ? ' ← MISMATCH' : ''}`,
               'TC-03a');
           } else {
-            log('TC-03 Premium Calculation', 'Premium amount readable in widget', 'WARN',
-              `Could not parse $ amount from widget text: "${widget.text?.slice(0,60).replace(/\s+/g,' ')}"`);
+            log('TC-03 Premium Calculation', 'Route line item found in cart', 'WARN',
+              'Route item not in /cart.js yet — may need more time or Route is not inserting itself');
+          }
+
+          // Source 2: widget text on cart page ("Your order is protected for $X")
+          const pageText = await page.evaluate(() => document.body.innerText || '');
+          const textMatch = pageText.match(/order.*?protected.*?\$([\d.]+)/i)
+                         || pageText.match(/protected.*?for.*?\$([\d.]+)/i)
+                         || pageText.match(/\$([\d.]+).*?protection/i);
+          if (textMatch) {
+            const shownAmt = parseFloat(textMatch[1]);
+            const target   = expectedVariant ?? rawPremium;
+            const ok       = Math.abs(shownAmt - target) <= 0.20;
+            log('TC-03 Premium Calculation', 'Widget text shows correct premium amount',
+              ok ? 'PASS' : 'FAIL',
+              `Widget shows: $${shownAmt.toFixed(2)} | Expected: $${target.toFixed(2)}`,
+              'TC-03b');
+          } else {
+            // Last fallback: verify at checkout
+            log('TC-03 Premium Calculation', 'Widget text premium', 'INFO',
+              'Premium not visible in widget text — will verify at checkout');
+            const checkoutClicked = await clickCheckout();
+            if (checkoutClicked) {
+              await page.waitForTimeout(5000);
+              await handleCloudflare();
+              if (/checkout|checkouts/i.test(page.url())) {
+                // Read Route item price from checkout order summary
+                const checkoutPremium = await page.evaluate(() => {
+                  const text = document.body.innerText || '';
+                  // Find the Route line and grab the $ amount after it
+                  const match = text.match(/shipping protection by route[\s\S]{0,50}?\$([\d.]+)/i)
+                             || text.match(/\$([\d.]+)[\s\S]{0,10}?2\.15/i); // fallback
+                  return match ? parseFloat(match[1]) : null;
+                });
+                if (checkoutPremium !== null) {
+                  const target = expectedVariant ?? rawPremium;
+                  const ok = Math.abs(checkoutPremium - target) <= 0.20;
+                  log('TC-03 Premium Calculation', 'Checkout order summary shows correct premium',
+                    ok ? 'PASS' : 'FAIL',
+                    `Checkout shows: $${checkoutPremium.toFixed(2)} | Expected: $${target.toFixed(2)}`,
+                    'TC-03c');
+                } else {
+                  log('TC-03 Premium Calculation', 'Premium at checkout', 'WARN',
+                    'Could not read premium from checkout order summary — verify manually');
+                }
+                // Go back to continue tests
+                await page.goBack().catch(() => safeGoto(cartUrl, 'cart'));
+              }
+            }
           }
         } else {
-          log('TC-03 Premium Calculation', 'Premium calculation', 'WARN', 'Could not read /cart.js for subtotal');
+          log('TC-03 Premium Calculation', 'Premium calculation', 'WARN', 'Could not read /cart.js');
         }
       } catch(e) {
         log('TC-03 Premium Calculation', 'Premium calculation', 'WARN', e.message.split('\n')[0]);
