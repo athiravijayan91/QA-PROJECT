@@ -644,17 +644,56 @@ async function runQA(RATES) {
   // ── Helper: count Route items on checkout page ────────────────────────────
   // Specifically looks for 'Shipping Protection by Route' as shown in checkout order summary
   async function getRouteCountAtCheckout() {
+    // Step 1: Expand any collapsed order-summary/order-review sections
+    // Many Shopify themes collapse the order summary behind a toggle on mobile/checkout
+    await page.evaluate(async () => {
+      const TOGGLE_RE = /order\s*(summary|review|details)|show\s*order|cart\s*summary|your\s*order/i;
+      // Find all buttons / anchors / details / summary elements that look like order toggles
+      const toggles = [
+        ...document.querySelectorAll(
+          'button, [role="button"], a, summary, ' +
+          '[class*="order-summary"] [class*="toggle"], ' +
+          '[class*="order-summary__toggle"], ' +
+          '[data-order-summary-toggle], ' +
+          '[aria-controls*="order"], [aria-expanded="false"]'
+        )
+      ];
+      for (const el of toggles) {
+        const txt  = (el.innerText || el.getAttribute('aria-label') || el.title || '').trim();
+        const ctrl = el.getAttribute('aria-controls') || '';
+        if (TOGGLE_RE.test(txt) || TOGGLE_RE.test(ctrl)) {
+          // Only click if it's currently collapsed / closed
+          const expanded = el.getAttribute('aria-expanded');
+          const isDetails = el.tagName === 'SUMMARY';
+          if (expanded === 'false' || isDetails) {
+            try { el.click(); } catch(_) {}
+            await new Promise(r => setTimeout(r, 600));
+          }
+        }
+      }
+      // Also open any <details> elements containing order summary content
+      document.querySelectorAll('details').forEach(d => {
+        const inner = d.innerText || '';
+        if (/order|shipping protection/i.test(inner)) d.open = true;
+      });
+    });
+
+    // Step 2: Wait a moment for the expanded content to render
+    await page.waitForTimeout(1500);
+
+    // Step 3: Count Route occurrences in the now-visible page
     return page.evaluate(() => {
       const fullText = document.body.innerText || '';
-      // Primary: look for 'Shipping Protection by Route' in any element
-      const allEls = document.querySelectorAll('td, li, div, span, p');
+      // Primary: scan leaf-level elements for exact phrase
+      const allEls = document.querySelectorAll('td, li, div, span, p, th, dt, dd');
       let count = 0;
       for (const el of allEls) {
-        const t = (el.childElementCount === 0 ? el.innerText || el.textContent : '') || '';
-        if (/shipping protection by route/i.test(t.trim())) { count++; break; }
+        if (el.childElementCount > 0) continue; // leaf nodes only
+        const t = (el.innerText || el.textContent || '').trim();
+        if (/shipping protection by route/i.test(t)) count++;
       }
       if (count > 0) return count;
-      // Fallback: full page text scan
+      // Fallback: full page text (catches any remaining cases)
       if (/shipping protection by route/i.test(fullText)) return 1;
       if (/route.*protection|route.*shipping|route.*package/i.test(fullText)) return 1;
       return 0;
@@ -1078,39 +1117,138 @@ async function runQA(RATES) {
     await testGap(2000);
     // ════════════════════════════════════════════════════════════════════════
     if (productUrl) {
-      // 7a: single product qty 1→3
+
+      // ── Helper: detect "maximum qty" error messages on the cart page ───────
+      const hasMaxQtyError = async () => page.evaluate(() => {
+        const MAX_RE = /maximum\s*(quantity|number|amount|items?)\s*(available|added|reached|per\s*order)?|maximum\s*order\s*qty|limit\s*reached|you.*already.*max|only\s*\d+\s*(left|available|in\s*stock)/i;
+        const text = document.body.innerText || '';
+        return MAX_RE.test(text);
+      });
+
+      // ── Helper: get current cart subtotal from /cart.js ─────────────────
+      const getCartSubtotal = async () => page.evaluate(() =>
+        fetch('/cart.js').then(r => r.json()).then(c => c.total_price / 100).catch(() => 0)
+      );
+
+      // ── Helper: checkout and verify Route ──────────────────────────────
+      const checkoutAndVerifyRoute = async (label, subContext) => {
+        const clicked = await clickCheckout();
+        if (!clicked) {
+          log('TC-06 Updates[] Checks', `${label} — checkout button`, 'WARN', 'Checkout button not found');
+          return;
+        }
+        await page.waitForTimeout(5000);
+        await handleCloudflare();
+        if (!/checkout|checkouts/i.test(page.url())) {
+          log('TC-06 Updates[] Checks', `${label} — navigation`, 'WARN', `Did not reach checkout — URL: ${page.url().slice(0,80)}`);
+          return;
+        }
+        await page.waitForTimeout(2000);
+        const rCount = await getRouteCountAtCheckout();
+        log('TC-06 Updates[] Checks', `${label} — Route present at checkout`,
+          rCount > 0 ? 'PASS' : 'FAIL',
+          `${rCount} Route item(s) found in order summary`, subContext);
+        log('TC-06 Updates[] Checks', `${label} — Only 1 Route item (no duplicates)`,
+          rCount === 1 ? 'PASS' : 'FAIL',
+          rCount === 1 ? '✓ Exactly 1 Route item' : `${rCount} Route items — check for duplicates`, subContext);
+      };
+
+      // ── Helper: try to increase qty, detect limit, find alternate if needed ─
+      const tryIncreaseQty = async (targetQty) => {
+        // Find quantity input
+        const inp = await page.$('input[name="updates[]"], input[class*="quantity"], input[type="number"][min], input[class*="qty"]');
+        if (!inp) {
+          log('TC-06 Updates[] Checks', 'Quantity input', 'WARN', 'No qty input found on cart page');
+          return { changed: false, hitLimit: false };
+        }
+
+        const oldSubtotal = await getCartSubtotal();
+
+        try {
+          await inp.triple_click ? inp.triple_click() : inp.click({ clickCount: 3 });
+        } catch (_) { await inp.click({ clickCount: 3 }).catch(() => {}); }
+        await inp.fill(String(targetQty));
+        await inp.press('Enter');
+        await page.waitForTimeout(2500);
+
+        // Check for max qty error message
+        const hitLimit = await hasMaxQtyError();
+        if (hitLimit) {
+          log('TC-06 Updates[] Checks', `Qty limit hit for product at qty=${targetQty}`,
+            'INFO', 'Maximum quantity error detected — will try alternate products');
+          return { changed: false, hitLimit: true };
+        }
+
+        const newSubtotal = await getCartSubtotal();
+        return { changed: newSubtotal !== oldSubtotal, hitLimit: false };
+      };
+
+      // ─────────────────────────────────────────────────────────────────────
+      // 7a: Single product, qty 1 → 3
+      // ─────────────────────────────────────────────────────────────────────
       await clearCart();
       await safeGoto(productUrl, 'product (TC-06a)');
       await clickAddToCart(page);
       await safeGoto(cartUrl, 'cart (TC-06a)');
+      await closePopups();
       await waitForRouteWidget(page, 6000);
-      // Increase qty to 3
-      const inp6a = await page.$('input[name="updates[]"], input[class*="quantity"], input[type="number"][min]');
-      if (inp6a) {
-        await inp6a.fill('3');
-        await inp6a.press('Enter');
-        await page.waitForTimeout(1000);
-        await waitForRouteWidget(page, 3000);
-      }
-      const clicked6a = await clickCheckout();
-      if (clicked6a) {
-        await page.waitForTimeout(4000);
-        if (/checkout|checkouts/i.test(page.url())) {
-          await page.waitForTimeout(1500);
-          const r6a = await getRouteCountAtCheckout();
-          log('TC-06 Updates[] Checks', 'Single product qty 3 → only 1 Route at checkout',
-            r6a === 1 ? 'PASS' : 'FAIL',
-            `${r6a} Route item(s) at checkout (qty=3)`, 'TC-06a');
+      await page.waitForTimeout(1000);
+
+      const sub6a_before = await getCartSubtotal();
+      log('TC-06 Updates[] Checks', 'Qty=1 subtotal captured', 'INFO', `Subtotal: $${sub6a_before.toFixed(2)}`);
+
+      const qtyResult6a = await tryIncreaseQty(3);
+
+      if (qtyResult6a.hitLimit) {
+        // Try to find another product that allows qty increase
+        log('TC-06 Updates[] Checks', 'Looking for alternate product without qty limit', 'INFO', '');
+        let foundAlternate = false;
+        const allCandidates = await collectProductLinks();
+        for (const altUrl of allCandidates) {
+          if (altUrl === productUrl || altUrl === productUrl2) continue;
+          try {
+            await safeGoto(altUrl, 'alternate product (TC-06)');
+            await closePopups();
+            await page.waitForTimeout(1000);
+            const addable = await isProductAddable(page);
+            if (!addable) continue;
+            const added = await clickAddToCart(page);
+            if (!added) continue;
+            await safeGoto(cartUrl, 'cart with alternate product (TC-06)');
+            await closePopups();
+            await waitForRouteWidget(page, 5000);
+            await page.waitForTimeout(1000);
+            const altQtyResult = await tryIncreaseQty(3);
+            if (!altQtyResult.hitLimit && altQtyResult.changed) {
+              log('TC-06 Updates[] Checks', `Using alternate product for qty test`, 'INFO', altUrl);
+              foundAlternate = true;
+              await waitForRouteWidget(page, 3000);
+              const sub6a_after = await getCartSubtotal();
+              log('TC-06 Updates[] Checks', 'Subtotal updated after qty change', sub6a_after !== sub6a_before ? 'PASS' : 'WARN',
+                `Subtotal: $${sub6a_after.toFixed(2)}`);
+              await checkoutAndVerifyRoute('Single product qty=3 (alternate)', 'TC-06a');
+              foundAlternate = true;
+              break;
+            }
+          } catch (_) {}
         }
+        if (!foundAlternate) {
+          log('TC-06 Updates[] Checks', 'Single product qty increase — all products hit max qty limit', 'WARN',
+            'Could not test qty increase — all checked products have qty restrictions');
+        }
+      } else if (qtyResult6a.changed) {
+        await waitForRouteWidget(page, 3000);
+        const sub6a_after = await getCartSubtotal();
+        log('TC-06 Updates[] Checks', 'Subtotal updated after qty change to 3', sub6a_after > sub6a_before ? 'PASS' : 'WARN',
+          `Before: $${sub6a_before.toFixed(2)} → After: $${sub6a_after.toFixed(2)}`);
+        await checkoutAndVerifyRoute('Single product qty=3', 'TC-06a');
       } else {
-        // Fallback: check via /cart.js
-        const rc = await getRouteLineItemCount(page);
-        log('TC-06 Updates[] Checks', 'Single product qty 3 → Route count in cart',
-          rc === 1 ? 'PASS' : 'FAIL',
-          `${rc} Route item(s) in /cart.js (qty=3)`, 'TC-06a');
+        log('TC-06 Updates[] Checks', 'Qty change (1→3)', 'WARN', 'Subtotal did not change after qty update — cart may not have updated');
       }
 
-      // 7b: multiple products, qty increase
+      // ─────────────────────────────────────────────────────────────────────
+      // 7b: Multiple products, qty increase
+      // ─────────────────────────────────────────────────────────────────────
       if (productUrl2) {
         await clearCart();
         await safeGoto(productUrl, 'product 1 (TC-06b)');
@@ -1120,19 +1258,27 @@ async function runQA(RATES) {
         await safeGoto(cartUrl, 'cart (TC-06b)');
         await closePopups();
         await waitForRouteWidget(page, 6000);
-        const inp6b = await page.$('input[name="updates[]"], input[class*="quantity"], input[type="number"][min]');
-        if (inp6b) { await inp6b.fill('3'); await inp6b.press('Enter'); await page.waitForTimeout(1000); }
-        const clicked6b = await clickCheckout();
-        if (clicked6b) {
-          await page.waitForTimeout(5000);
-          if (/checkout|checkouts/i.test(page.url())) {
-            await page.waitForTimeout(1500);
-            const r6b = await getRouteCountAtCheckout();
-            log('TC-06 Updates[] Checks', 'Multiple products qty increase → only 1 Route at checkout',
-              r6b === 1 ? 'PASS' : 'FAIL',
-              `${r6b} Route item(s) at checkout`, 'TC-06b');
-          }
+        await page.waitForTimeout(1000);
+
+        const sub6b_before = await getCartSubtotal();
+        log('TC-06 Updates[] Checks', 'Multi-product subtotal captured', 'INFO', `Subtotal: $${sub6b_before.toFixed(2)}`);
+
+        const qtyResult6b = await tryIncreaseQty(2);
+        if (!qtyResult6b.hitLimit && qtyResult6b.changed) {
+          await waitForRouteWidget(page, 3000);
+          const sub6b_after = await getCartSubtotal();
+          log('TC-06 Updates[] Checks', 'Multi-product subtotal updated after qty change',
+            sub6b_after > sub6b_before ? 'PASS' : 'WARN',
+            `Before: $${sub6b_before.toFixed(2)} → After: $${sub6b_after.toFixed(2)}`);
+          await checkoutAndVerifyRoute('Multiple products qty increase', 'TC-06b');
+        } else if (qtyResult6b.hitLimit) {
+          log('TC-06 Updates[] Checks', 'Multiple products qty increase — limit hit', 'WARN',
+            'Product has qty restriction — verify manually with a product that allows higher quantities');
+        } else {
+          log('TC-06 Updates[] Checks', 'Multiple products qty change', 'WARN', 'Subtotal did not update');
         }
+      } else {
+        log('TC-06 Updates[] Checks', 'Multiple products test', 'WARN', 'Only one addable product found — skipped TC-06b');
       }
     } else {
       log('TC-06 Updates[] Checks', 'Quantity change checks', 'WARN', 'No product URL found');
