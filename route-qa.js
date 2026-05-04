@@ -306,22 +306,52 @@ async function waitForRouteWidget(page, timeout = 5000) {
 }
 
 // Find and click an add-to-cart button on the current page
+// Returns true if the page has a real, clickable Add to Cart button (not sold out / disabled)
+async function isProductAddable(page) {
+  return page.evaluate(() => {
+    const SOLD_OUT_RE = /sold[\s-]*out|out[\s-]*of[\s-]*stock|unavailable|special[\s-]*order/i;
+    const ATC_RE      = /add[\s-]*to[\s-]*cart|add[\s-]*to[\s-]*bag|add[\s-]*to[\s-]*basket|buy[\s-]*now|add[\s-]*to[\s-]*trolley/i;
+    const candidates = [
+      ...document.querySelectorAll(
+        'button[name="add"], [data-add-to-cart], button[id*="add-to-cart"], ' +
+        'button[class*="add-to-cart"], button[class*="add-to-bag"], ' +
+        'input[name="add"], .btn-addtocart, .add-to-cart-btn, ' +
+        'form[action*="/cart/add"] button[type="submit"]'
+      )
+    ];
+    for (const btn of candidates) {
+      const txt  = (btn.innerText || btn.value || '').trim();
+      const disabled = btn.disabled || btn.getAttribute('aria-disabled') === 'true';
+      if (disabled) continue;
+      if (SOLD_OUT_RE.test(txt)) continue;
+      // Accept if text clearly says ATC or if it's an Add form submit with no "sold out" text
+      if (ATC_RE.test(txt) || txt === '') return true;
+    }
+    return false;
+  });
+}
+
 async function clickAddToCart(page) {
   const selectors = [
     'button[name="add"]',
     '[data-add-to-cart]',
     'button[id*="add-to-cart"]',
     'button[class*="add-to-cart"]',
+    'button[class*="add-to-bag"]',
     'input[name="add"]',
     '.btn-addtocart',
     '.add-to-cart-btn',
     'form[action*="/cart/add"] button[type="submit"]',
   ];
+  const SOLD_OUT_RE = /sold[\s-]*out|out[\s-]*of[\s-]*stock|unavailable|special[\s-]*order/i;
   for (const sel of selectors) {
     const btn = await page.$(sel);
     if (btn) {
       try {
-        await btn.scrollIntoViewIfNeeded();
+        const txt      = await btn.evaluate(el => (el.innerText || el.value || '').trim());
+        const disabled = await btn.evaluate(el => el.disabled || el.getAttribute('aria-disabled') === 'true');
+        if (disabled || SOLD_OUT_RE.test(txt)) continue;
+        await btn.scrollIntoViewIfNeeded({ timeout: 3000 }).catch(() => {});
         await btn.click({ timeout: 5000 });
         await page.waitForTimeout(3500); // wait for cart drawer / redirect to settle
         return true;
@@ -631,30 +661,108 @@ async function runQA(RATES) {
     });
   }
 
-  // ── Helper: get all product URLs from homepage/collections ────────────────
-  async function discoverProducts() {
+  // ── Helper: collect candidate product URLs (up to 15) ────────────────────
+  async function collectProductLinks() {
     await safeGoto(BASE_URL, 'homepage');
+    await closePopups();
     let links = await page.$$eval('a[href*="/products/"]',
       els => [...new Set(els.map(e => e.href))]
         .filter(h => !h.includes('/collections') && !h.includes('route'))
-        .slice(0, 5)
     );
-    if (links.length < 2) {
-      await safeGoto(new URL('/collections/all', BASE_URL).href, 'collections/all');
-      links = await page.$$eval('a[href*="/products/"]',
-        els => [...new Set(els.map(e => e.href))]
-          .filter(h => !h.includes('route'))
-          .slice(0, 5)
-      );
+    // Always also try /collections/all for more candidates
+    await safeGoto(new URL('/collections/all', BASE_URL).href, 'collections/all');
+    await closePopups();
+    const collLinks = await page.$$eval('a[href*="/products/"]',
+      els => [...new Set(els.map(e => e.href))].filter(h => !h.includes('route'))
+    );
+    // Merge + dedupe, limit to 15
+    const all = [...new Set([...links, ...collLinks])].slice(0, 15);
+    return all;
+  }
+
+  // ── Helper: find addable products by visiting each candidate ──────────────
+  async function discoverProducts() {
+    sseEmit('section', { name: '🔍 Finding addable products…' });
+    const candidates = await collectProductLinks();
+    sseEmit('result', {
+      section: 'Setup', name: 'Product discovery',
+      status: candidates.length ? 'INFO' : 'WARN',
+      detail: candidates.length
+        ? `Found ${candidates.length} product candidate(s) to check`
+        : 'No product links found on homepage or /collections/all'
+    });
+
+    let found = 0;
+    for (const url of candidates) {
+      if (found >= 2) break;
+      try {
+        await safeGoto(url, 'checking product');
+        await closePopups();
+        await page.waitForTimeout(1500); // let page settle
+        const addable = await isProductAddable(page);
+        if (!addable) {
+          sseEmit('result', {
+            section: 'Setup', name: 'Product skipped (sold out / no ATC)',
+            status: 'INFO', detail: url
+          });
+          continue;
+        }
+        // Try actually adding it to cart to confirm
+        const added = await clickAddToCart(page);
+        if (!added) {
+          sseEmit('result', {
+            section: 'Setup', name: 'Product skipped (ATC click failed)',
+            status: 'INFO', detail: url
+          });
+          continue;
+        }
+        // Confirm cart has items
+        const cartCount = await page.evaluate(() => {
+          return fetch('/cart.js').then(r => r.json()).then(c => c.item_count).catch(() => 0);
+        });
+        if (cartCount === 0) {
+          sseEmit('result', {
+            section: 'Setup', name: 'Product skipped (cart still empty after ATC)',
+            status: 'INFO', detail: url
+          });
+          continue;
+        }
+        // This product works!
+        found++;
+        if (found === 1) {
+          productUrl = url;
+          sseEmit('result', {
+            section: 'Setup', name: '✅ Product 1 confirmed (addable)',
+            status: 'PASS', detail: url
+          });
+        } else {
+          productUrl2 = url;
+          sseEmit('result', {
+            section: 'Setup', name: '✅ Product 2 confirmed (addable)',
+            status: 'PASS', detail: url
+          });
+        }
+        // Clear cart before tests start
+        await page.evaluate(() => fetch('/cart/clear.js', { method: 'POST' }).catch(() => {}));
+        await page.waitForTimeout(1000);
+      } catch (e) {
+        // skip this product and move on
+      }
     }
-    productUrl  = links[0] || null;
-    productUrl2 = links[1] || null;
+
+    if (!productUrl) {
+      sseEmit('result', {
+        section: 'Setup', name: '❌ No addable product found',
+        status: 'FAIL',
+        detail: `Checked ${candidates.length} product(s) — all appear to be sold out, disabled, or use a non-standard cart form. Most tests will be skipped.`
+      });
+    }
   }
 
   try {
-    // Discover products first (needed by most tests)
+    // Discover products first — validates each can actually be added to cart
     await discoverProducts();
-    await closePopups(); // dismiss any homepage popups
+    await closePopups();
 
     // ════════════════════════════════════════════════════════════════════════
     sectionHeader('1 · Widget Version Confirmation');
