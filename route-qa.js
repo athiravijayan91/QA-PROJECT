@@ -1563,8 +1563,49 @@ async function runQA(RATES) {
             el.dispatchEvent(new Event('change', { bubbles: true }));
           }, { el: inp, v: String(targetQty) });
         });
+
+        // Trigger update — try Enter first, then look for an explicit "Update cart" button
         await inp.press('Enter').catch(() => {});
-        await page.waitForTimeout(2500);
+        await page.waitForTimeout(1000);
+
+        // Some themes require clicking an Update / Refresh button after changing qty
+        const updateBtn = await page.$([
+          'button[name="update"]',
+          'button[class*="update-cart"]',
+          'button[class*="cart-update"]',
+          'input[name="update"]',
+          'button[class*="qty-update"]',
+          '[data-cart-update]',
+        ].join(', ')).catch(() => null);
+        if (updateBtn && await updateBtn.isVisible().catch(() => false)) {
+          await updateBtn.click({ force: true, timeout: 3000 }).catch(() => {});
+        }
+
+        // Also try clicking the + stepper if qty didn't go up (some themes ignore direct fill)
+        // by checking current input value vs target
+        const currentVal = await inp.evaluate(el => parseInt(el.value) || 0).catch(() => 0);
+        if (currentVal < targetQty) {
+          const plusBtn = await page.$([
+            'button[class*="qty-plus"]', 'button[class*="quantity-plus"]',
+            'button[aria-label*="Increase"]', 'button[aria-label*="increase"]',
+            '[data-qty-plus]', '[class*="plus"]',
+          ].join(', ')).catch(() => null);
+          if (plusBtn && await plusBtn.isVisible().catch(() => false)) {
+            const clicks = targetQty - currentVal;
+            for (let c = 0; c < clicks && c < 10; c++) {
+              await plusBtn.click({ force: true, timeout: 2000 }).catch(() => {});
+              await page.waitForTimeout(400);
+            }
+          }
+        }
+
+        // Wait for cart to recalculate — up to 6s polling every 500ms
+        let newSubtotal = oldSubtotal;
+        for (let attempt = 0; attempt < 12; attempt++) {
+          await page.waitForTimeout(500);
+          newSubtotal = await getCartSubtotal();
+          if (newSubtotal !== oldSubtotal) break;
+        }
 
         // Check for max qty error message
         const hitLimit = await hasMaxQtyError();
@@ -1574,8 +1615,7 @@ async function runQA(RATES) {
           return { changed: false, hitLimit: true };
         }
 
-        const newSubtotal = await getCartSubtotal();
-        return { changed: newSubtotal !== oldSubtotal, hitLimit: false };
+        return { changed: newSubtotal !== oldSubtotal, hitLimit: false, newSubtotal };
       };
 
       // ─────────────────────────────────────────────────────────────────────
