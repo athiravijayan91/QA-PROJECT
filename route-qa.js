@@ -611,36 +611,117 @@ async function runQA(RATES) {
   }
 
   // ── Helper: find checkout button and click ────────────────────────────────
-  async function clickCheckout() {
+  // Priority order: Route's cloned button first, then standard Shopify, then text fallback
+  async function clickCheckout(container) {
+    const root = container || page;
     const selectors = [
+      // Route clones the checkout button — this is the REAL clickable one
+      'button[data-route-cloned-button="true"]',
+      'button[data-route-cloned-button]',
+      // Standard Shopify
       'button[name="checkout"]', 'input[name="checkout"]',
       '[data-testid="checkout-button"]', '.checkout-button',
-      'a[href*="/checkout"]', '#checkout', 'button[id*="checkout"]',
-      '[class*="checkout-btn"]', '[class*="checkout_btn"]',
+      'button[id*="checkout"]', '[class*="checkout-btn"]', '[class*="checkout_btn"]',
       'form[action*="/checkout"] button[type="submit"]',
+      // Href-based (anchor tags)
+      'a[href*="/checkout"]', '#checkout',
     ];
     for (const sel of selectors) {
-      const btn = await page.$(sel);
-      if (btn) {
-        try { await btn.scrollIntoViewIfNeeded({ timeout: 3000 }); } catch(_) {}
-        try {
-          await btn.click({ timeout: 8000, force: true });
-          return true;
-        } catch(_) {
-          // Try JS click as fallback
-          try {
-            await page.evaluate(el => el.click(), btn);
-            return true;
-          } catch(_) {}
-        }
+      const btn = await root.$(sel);
+      if (!btn) continue;
+      try {
+        const isVisible = await btn.isVisible().catch(() => false);
+        const isDisabled = await btn.evaluate(el =>
+          el.disabled || el.getAttribute('aria-disabled') === 'true' || getComputedStyle(el).pointerEvents === 'none'
+        ).catch(() => false);
+        if (isDisabled) continue;
+        // Scroll into view then click — use force to bypass minor visibility issues
+        await btn.scrollIntoViewIfNeeded({ timeout: 3000 }).catch(() => {});
+        await btn.click({ timeout: 8000, force: true });
+        return true;
+      } catch(_) {
+        try { await page.evaluate(el => el.click(), btn); return true; } catch(_) {}
       }
     }
-    // Last resort: find by text
-    try {
-      await page.click('text=Checkout', { timeout: 5000 });
-      return true;
-    } catch(_) {}
+    // Text-based fallback — try 'Check out', 'Checkout', 'Proceed to checkout'
+    for (const txt of ['Check out', 'Checkout', 'Proceed to checkout', 'Continue to checkout']) {
+      try { await page.click(`text="${txt}"`, { timeout: 3000, force: true }); return true; } catch(_) {}
+    }
     return false;
+  }
+
+  // ── Helper: detect if a cart drawer/modal is currently open ───────────────
+  async function isDrawerOpen() {
+    return page.evaluate(() => {
+      // Check for drawer containers that are visible
+      const drawerSelectors = [
+        '.cart-drawer', '[class*="cart-drawer"]', '[id*="cart-drawer"]', '[id*="CartDrawer"]',
+        '.cart-modal', '[class*="cart-modal"]',
+        '.cart-notification', '[class*="cart-notification"]',
+        '[class*="cart-aside"]', '[class*="cart-slide"]', '[class*="cart-sidebar"]',
+        '.drawer', '[class*="side-cart"]', '[class*="mini-cart"]',
+      ];
+      for (const sel of drawerSelectors) {
+        const el = document.querySelector(sel);
+        if (!el) continue;
+        const style = window.getComputedStyle(el);
+        if (style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0') return true;
+      }
+      // Also check body class patterns (some themes add a class when drawer opens)
+      const bodyClass = document.body.className || '';
+      if (/cart.*open|open.*cart|is-not-scrollable|drawer.*active|active.*drawer/i.test(bodyClass)) return true;
+      return false;
+    });
+  }
+
+  // ── Helper: find checkout button inside a drawer (prefers Route's cloned btn) ─
+  async function findDrawerCheckoutBtn() {
+    // Route's cloned button is the most reliable — it's visible when drawer is open
+    const routeBtn = await page.$('button[data-route-cloned-button="true"]');
+    if (routeBtn && await routeBtn.isVisible().catch(() => false)) return routeBtn;
+
+    // Try within known drawer containers
+    const drawerSels = [
+      '[class*="cart-drawer"]', '[id*="cart-drawer"]', '[id*="CartDrawer"]',
+      '[class*="cart-modal"]', '[class*="cart-aside"]', '[class*="cart-slide"]',
+      '[class*="side-cart"]', '[class*="mini-cart"]', '.drawer',
+    ];
+    for (const container of drawerSels) {
+      const root = await page.$(container);
+      if (!root) continue;
+      const vis = await root.isVisible().catch(() => false);
+      if (!vis) continue;
+      // Try checkout button inside this container
+      for (const btnSel of [
+        'button[name="checkout"]', 'input[name="checkout"]',
+        'button[data-route-cloned-button]', 'a[href*="/checkout"]',
+      ]) {
+        const btn = await root.$(btnSel);
+        if (btn && await btn.isVisible().catch(() => false)) return btn;
+      }
+    }
+    return null;
+  }
+
+  // ── Helper: checkout from drawer and verify Route at checkout ─────────────
+  async function checkoutFromDrawerAndVerify(label) {
+    const drawer = await isDrawerOpen();
+    if (!drawer) return { tested: false, reason: 'No drawer/modal detected after Add to Cart' };
+
+    const btn = await findDrawerCheckoutBtn();
+    if (!btn) return { tested: false, reason: 'Drawer open but checkout button not found inside it' };
+
+    await btn.scrollIntoViewIfNeeded({ timeout: 2000 }).catch(() => {});
+    await btn.click({ force: true, timeout: 8000 });
+    await page.waitForTimeout(5000);
+    await handleCloudflare();
+
+    const onCheckout = /checkout|checkouts/i.test(page.url());
+    if (!onCheckout) return { tested: true, pass: false, reason: `Did not reach checkout — URL: ${page.url().slice(0, 80)}` };
+
+    await page.waitForTimeout(2000);
+    const count = await getRouteCountAtCheckout();
+    return { tested: true, count, pass: count > 0 };
   }
 
   // ── Helper: find CWC link and click ──────────────────────────────────────
@@ -909,6 +990,7 @@ async function runQA(RATES) {
     sectionHeader('2 · TC-01: Route Added via Checkout ⭐');
     await testGap(2000);
     // ════════════════════════════════════════════════════════════════════════
+    // TC-01 tests checkout from TWO places: drawer cart (if it opens) AND main cart page
     if (productUrl) {
       await clearCart();
       await safeGoto(productUrl, 'product page (TC-01)');
@@ -916,44 +998,68 @@ async function runQA(RATES) {
       if (!added) {
         log('TC-01 Route Added via Checkout', 'Add to Cart succeeded', 'WARN', 'Could not click Add to Cart — test skipped');
       } else {
-        await safeGoto(cartUrl, 'cart (TC-01)');
+        await page.waitForTimeout(2000); // let drawer animate open
+        await closePopups();
+
+        // ── TC-01a: Drawer cart checkout ─────────────────────────────────
+        try {
+          const drawerResult = await checkoutFromDrawerAndVerify('TC-01a');
+          if (!drawerResult.tested) {
+            log('TC-01 Route Added via Checkout', 'Drawer cart checkout', 'INFO',
+              drawerResult.reason || 'No drawer detected — skipping drawer test');
+          } else if (!drawerResult.pass && drawerResult.reason) {
+            log('TC-01 Route Added via Checkout', 'Drawer cart → reached checkout', 'WARN', drawerResult.reason);
+          } else {
+            log('TC-01 Route Added via Checkout', 'Drawer cart → Route present at checkout',
+              drawerResult.pass ? 'PASS' : 'FAIL',
+              drawerResult.pass
+                ? `${drawerResult.count} Route item(s) found in order summary`
+                : 'Route NOT found in checkout order summary after drawer checkout',
+              'TC-01a');
+            log('TC-01 Route Added via Checkout', 'Drawer cart → Only 1 Route (no duplicates)',
+              drawerResult.count === 1 ? 'PASS' : 'FAIL',
+              drawerResult.count === 1 ? 'Exactly 1 Route item ✓' : `${drawerResult.count} Route item(s) — check for duplicates`,
+              'TC-01a');
+          }
+        } catch(e) {
+          log('TC-01 Route Added via Checkout', 'Drawer cart checkout error', 'WARN', e.message.slice(0,120));
+        }
+
+        // ── TC-01b: Main cart page checkout ──────────────────────────────
+        await safeGoto(cartUrl, 'main cart (TC-01b)');
         await closePopups();
         await waitForRouteWidget(page, 6000);
-        await page.waitForTimeout(1500);
-
-        // Click Checkout button
+        await page.waitForTimeout(2000);
         try {
           const checkoutClicked = await clickCheckout();
           if (!checkoutClicked) {
-            log('TC-01 Route Added via Checkout', 'Checkout button found and clicked', 'WARN', 'Could not find Checkout button — verify manually');
+            log('TC-01 Route Added via Checkout', 'Main cart → checkout button clicked', 'WARN',
+              'Checkout button not found on main cart page — check if cart uses a custom button');
           } else {
             await page.waitForTimeout(5000);
             await handleCloudflare();
             const onCheckout = /checkout|checkouts/i.test(page.url());
-
             if (onCheckout) {
-              log('TC-01 Route Added via Checkout', 'Successfully navigated to checkout page', 'PASS', page.url().slice(0,80));
-              await page.waitForTimeout(3000);
-              await closePopups(); // close any checkout popups
-
+              log('TC-01 Route Added via Checkout', 'Main cart → reached checkout page', 'PASS', page.url().slice(0,80));
+              await closePopups();
               const routeAtCheckout = await getRouteCountAtCheckout();
-              log('TC-01 Route Added via Checkout', 'Route product is present at checkout',
+              log('TC-01 Route Added via Checkout', 'Main cart → Route present at checkout',
                 routeAtCheckout > 0 ? 'PASS' : 'FAIL',
-                routeAtCheckout > 0 ? `${routeAtCheckout} Route item(s) in checkout order summary` : 'Route NOT found in checkout order summary',
-                'TC-01');
-              log('TC-01 Route Added via Checkout', 'Only ONE Route product (no duplicates)',
+                routeAtCheckout > 0 ? `${routeAtCheckout} Route item(s) in order summary` : 'Route NOT found in checkout order summary',
+                'TC-01b');
+              log('TC-01 Route Added via Checkout', 'Main cart → Only 1 Route (no duplicates)',
                 routeAtCheckout === 1 ? 'PASS' : 'FAIL',
-                routeAtCheckout > 1 ? `${routeAtCheckout} Route items — duplicates!` :
-                routeAtCheckout === 0 ? 'Route not found' : 'Exactly 1 Route item ✓',
-                'TC-01');
+                routeAtCheckout === 1 ? 'Exactly 1 Route item ✓' :
+                routeAtCheckout > 1 ? `${routeAtCheckout} Route items — duplicates!` : 'Route not found',
+                'TC-01b');
             } else {
-              log('TC-01 Route Added via Checkout', 'Navigated to checkout page', 'WARN',
+              log('TC-01 Route Added via Checkout', 'Main cart → checkout navigation', 'WARN',
                 `Did not reach checkout — current URL: ${page.url().slice(0,80)}`);
             }
           }
         } catch(e) {
-          log('TC-01 Route Added via Checkout', 'Checkout flow error', 'FAIL',
-            e.message.split('\n')[0].slice(0,150), 'TC-01');
+          log('TC-01 Route Added via Checkout', 'Main cart checkout error', 'FAIL',
+            e.message.split('\n')[0].slice(0,150), 'TC-01b');
         }
       }
     } else {
