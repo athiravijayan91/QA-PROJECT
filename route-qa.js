@@ -128,10 +128,12 @@ function startLiveServer() {
     console.log('  ℹ️   Fill in the config form and click "Start QA Checklist" to begin\n');
     try {
       const { execSync } = require('child_process');
+      // Open dashboard — use 'open' which opens in the current default browser
+      // without forcing a new window or moving existing windows around
       if (process.platform === 'darwin') {
-        // Open dashboard in Chrome and position it on the RIGHT half of the screen
-        execSync(`open -a "Google Chrome" http://localhost:3000`);
-        setTimeout(() => positionWindowsSideBySide(), 2000);
+        execSync(`open http://localhost:3000`);
+        // Only position windows when QA actually starts (after user fills the form)
+        // so we don't disrupt their current workspace on startup
       } else {
         const openCmd = process.platform === 'win32' ? 'start' : 'xdg-open';
         execSync(`${openCmd} http://localhost:3000`);
