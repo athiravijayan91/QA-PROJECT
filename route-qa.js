@@ -342,6 +342,12 @@ async function clickAddToCart(page) {
     '.btn-addtocart',
     '.add-to-cart-btn',
     'form[action*="/cart/add"] button[type="submit"]',
+    // Quick-add buttons on collection/product tiles
+    'button[class*="quick-add"]',
+    'button[data-quick-add]',
+    'button[class*="quickadd"]',
+    'button[class*="quick_add"]',
+    '[class*="product-card__cart-btn"]',
   ];
   const SOLD_OUT_RE = /sold[\s-]*out|out[\s-]*of[\s-]*stock|unavailable|special[\s-]*order/i;
   for (const sel of selectors) {
@@ -354,6 +360,24 @@ async function clickAddToCart(page) {
         await btn.scrollIntoViewIfNeeded({ timeout: 3000 }).catch(() => {});
         await btn.click({ timeout: 5000 });
         await page.waitForTimeout(3500); // wait for cart drawer / redirect to settle
+
+        // If a quick-add modal opened, try to confirm/add inside it
+        const modalBtn = await page.$([
+          '[class*="quick-add"] button[name="add"]',
+          '[class*="quick-add"] button[type="submit"]',
+          '[class*="quickadd"] button[type="submit"]',
+          '.modal button[name="add"]',
+          '.modal form[action*="/cart/add"] button',
+          '[role="dialog"] button[name="add"]',
+          '[role="dialog"] form[action*="/cart/add"] button[type="submit"]',
+        ].join(', ')).catch(() => null);
+        if (modalBtn) {
+          const mTxt = await modalBtn.evaluate(el => (el.innerText || '').trim());
+          if (!SOLD_OUT_RE.test(mTxt)) {
+            await modalBtn.click({ timeout: 5000 }).catch(() => {});
+            await page.waitForTimeout(2000);
+          }
+        }
         return true;
       } catch (_) {}
     }
@@ -643,61 +667,78 @@ async function runQA(RATES) {
 
   // ── Helper: count Route items on checkout page ────────────────────────────
   // Specifically looks for 'Shipping Protection by Route' as shown in checkout order summary
-  async function getRouteCountAtCheckout() {
-    // Step 1: Expand any collapsed order-summary/order-review sections
-    // Many Shopify themes collapse the order summary behind a toggle on mobile/checkout
-    await page.evaluate(async () => {
-      const TOGGLE_RE = /order\s*(summary|review|details)|show\s*order|cart\s*summary|your\s*order/i;
-      // Find all buttons / anchors / details / summary elements that look like order toggles
-      const toggles = [
-        ...document.querySelectorAll(
-          'button, [role="button"], a, summary, ' +
-          '[class*="order-summary"] [class*="toggle"], ' +
-          '[class*="order-summary__toggle"], ' +
-          '[data-order-summary-toggle], ' +
-          '[aria-controls*="order"], [aria-expanded="false"]'
-        )
-      ];
-      for (const el of toggles) {
-        const txt  = (el.innerText || el.getAttribute('aria-label') || el.title || '').trim();
-        const ctrl = el.getAttribute('aria-controls') || '';
-        if (TOGGLE_RE.test(txt) || TOGGLE_RE.test(ctrl)) {
-          // Only click if it's currently collapsed / closed
-          const expanded = el.getAttribute('aria-expanded');
-          const isDetails = el.tagName === 'SUMMARY';
-          if (expanded === 'false' || isDetails) {
-            try { el.click(); } catch(_) {}
-            await new Promise(r => setTimeout(r, 600));
-          }
-        }
-      }
-      // Also open any <details> elements containing order summary content
-      document.querySelectorAll('details').forEach(d => {
-        const inner = d.innerText || '';
-        if (/order|shipping protection/i.test(inner)) d.open = true;
-      });
-    });
-
-    // Step 2: Wait a moment for the expanded content to render
-    await page.waitForTimeout(1500);
-
-    // Step 3: Count Route occurrences in the now-visible page
-    return page.evaluate(() => {
-      const fullText = document.body.innerText || '';
-      // Primary: scan leaf-level elements for exact phrase
-      const allEls = document.querySelectorAll('td, li, div, span, p, th, dt, dd');
+  // Shared scanner: finds "Shipping Protection by Route" anywhere on page
+  const scanPageForRoute = () => page.evaluate(() => {
+    const fullText = document.body.innerText || '';
+    // Primary: check full page text first (fastest, most reliable)
+    if (/shipping protection by route/i.test(fullText)) {
+      // Count occurrences by scanning leaf nodes
+      const allEls = document.querySelectorAll('td, li, div, span, p, th, dt, dd, bdi, strong, h1, h2, h3');
       let count = 0;
       for (const el of allEls) {
-        if (el.childElementCount > 0) continue; // leaf nodes only
+        if (el.childElementCount > 0) continue;
         const t = (el.innerText || el.textContent || '').trim();
         if (/shipping protection by route/i.test(t)) count++;
       }
-      if (count > 0) return count;
-      // Fallback: full page text (catches any remaining cases)
-      if (/shipping protection by route/i.test(fullText)) return 1;
-      if (/route.*protection|route.*shipping|route.*package/i.test(fullText)) return 1;
-      return 0;
+      return count > 0 ? count : 1; // at minimum 1 if full-text matched
+    }
+    // Broader fallback
+    if (/route.*protection|route.*shipping|route.*package/i.test(fullText)) return 1;
+    return 0;
+  });
+
+  async function getRouteCountAtCheckout() {
+    // Step 1: Scan immediately — Route may already be visible (no expansion needed)
+    // Wait a bit for checkout JS to finish rendering
+    await page.waitForTimeout(2500);
+    const quickCount = await scanPageForRoute();
+    if (quickCount > 0) return quickCount;
+
+    // Step 2: Not found yet — try to expand any COLLAPSED order summary sections
+    // Use very targeted selectors only; avoid broad [aria-expanded="false"] which
+    // would catch unrelated UI elements like "Show more options" and flip page state
+    await page.evaluate(async () => {
+      const ORDER_RE = /order\s*(summary|review|details)|show\s*order|cart\s*summary|your\s*order/i;
+
+      // Targeted: known Shopify / common theme selectors for order summary toggles
+      const specific = document.querySelectorAll(
+        '[data-order-summary-toggle], ' +
+        '[class*="order-summary__toggle"], ' +
+        '[class*="order-summary-toggle"], ' +
+        '[class*="order__summary-toggle"]'
+      );
+      for (const el of specific) {
+        try { el.click(); } catch(_) {}
+        await new Promise(r => setTimeout(r, 600));
+      }
+
+      // <summary> tags inside <details> that look like order sections
+      const summaries = document.querySelectorAll('details summary');
+      for (const s of summaries) {
+        const txt = (s.innerText || s.getAttribute('aria-label') || '').trim();
+        if (ORDER_RE.test(txt)) {
+          const details = s.closest('details');
+          if (details && !details.open) {
+            details.open = true;
+            await new Promise(r => setTimeout(r, 500));
+          }
+        }
+      }
+
+      // Any button whose visible text is exactly about showing the order summary
+      const buttons = document.querySelectorAll('button, [role="button"]');
+      for (const btn of buttons) {
+        const txt = (btn.innerText || btn.getAttribute('aria-label') || '').trim();
+        if (ORDER_RE.test(txt) && btn.getAttribute('aria-expanded') === 'false') {
+          try { btn.click(); } catch(_) {}
+          await new Promise(r => setTimeout(r, 600));
+        }
+      }
     });
+
+    // Step 3: Wait for expanded content to render, then scan again
+    await page.waitForTimeout(2000);
+    return scanPageForRoute();
   }
 
   // ── Helper: collect candidate product URLs (up to 15) ────────────────────
@@ -1164,11 +1205,18 @@ async function runQA(RATES) {
 
         const oldSubtotal = await getCartSubtotal();
 
-        try {
-          await inp.triple_click ? inp.triple_click() : inp.click({ clickCount: 3 });
-        } catch (_) { await inp.click({ clickCount: 3 }).catch(() => {}); }
-        await inp.fill(String(targetQty));
-        await inp.press('Enter');
+        // Focus the input, select-all, then fill — avoids click visibility timeouts
+        try { await inp.focus({ timeout: 3000 }); } catch (_) {}
+        await page.keyboard.press('Control+a').catch(() => {});
+        await inp.fill(String(targetQty), { timeout: 5000 }).catch(async () => {
+          // Fallback: set value directly via JS and fire change events
+          await page.evaluate((el, v) => {
+            el.value = v;
+            el.dispatchEvent(new Event('input',  { bubbles: true }));
+            el.dispatchEvent(new Event('change', { bubbles: true }));
+          }, inp, String(targetQty));
+        });
+        await inp.press('Enter').catch(() => {});
         await page.waitForTimeout(2500);
 
         // Check for max qty error message
