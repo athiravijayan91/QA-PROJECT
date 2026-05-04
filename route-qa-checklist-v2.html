@@ -342,6 +342,20 @@ main{max-width:860px;margin:0 auto;padding:0 24px 60px;display:none}
         <label>Site URL *</label>
         <input type="url" id="cfg-url" placeholder="https://merchant.myshopify.com" autocomplete="off">
       </div>
+
+      <!-- Password protection -->
+      <div class="form-group full" style="margin-top:4px">
+        <label style="display:flex;align-items:center;gap:10px;cursor:pointer;text-transform:none;letter-spacing:0;font-weight:600;font-size:13px">
+          <input type="checkbox" id="cfg-pw-enabled" style="width:auto;padding:0;border:none;margin:0"
+            onchange="document.getElementById('cfg-pw-row').style.display=this.checked?'flex':'none'">
+          Site is password protected
+        </label>
+        <div id="cfg-pw-row" style="display:none;align-items:center;gap:10px;margin-top:8px">
+          <input type="password" id="cfg-pw" placeholder="Enter store password"
+            style="flex:1;padding:9px 12px;border:1px solid #d1d1d6;border-radius:8px;font-size:13px">
+          <span style="font-size:11px;color:#636366;white-space:nowrap">Auto-entered at login screen</span>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -1193,10 +1207,14 @@ async function startChecklist() {
     document.getElementById('checklist-main').style.display = 'none';
 
     try {
+      const pwEnabled = document.getElementById('cfg-pw-enabled')?.checked;
+      const sitePassword = pwEnabled ? (document.getElementById('cfg-pw')?.value || '') : '';
+
       await fetch('http://localhost:3000/start', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           url, merchant, cartWidget: cart, checkoutWidget: checkout, headless: false,
+          sitePassword,
           rateType: document.querySelector('input[name="rate-type"]:checked')?.value || 'static',
           tier1Rate: rates.t1Rate, tier1Format: rates.t1Format, tier1Min: rates.t1Min, tier1Max: rates.t1Max,
           tier1PaidBy: rates.t1PaidBy, tier1Default: rates.t1Default,

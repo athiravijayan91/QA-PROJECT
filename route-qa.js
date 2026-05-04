@@ -459,6 +459,7 @@ async function promptConfig() {
 
 // ── Main QA Runner ─────────────────────────────────────────────────────────
 async function runQA(RATES) {
+  const SITE_PASSWORD = RATES.sitePassword || '';
 
   // Use real Chrome if installed — much less likely to trigger Cloudflare
   let browser;
@@ -587,12 +588,50 @@ async function runQA(RATES) {
   }
 
   // Navigate with fallback strategies
+  // ── Password page handler ─────────────────────────────────────────────────
+  // Detects Shopify store password pages and auto-fills the password if provided.
+  async function handlePasswordPage() {
+    if (!SITE_PASSWORD) return false;
+    try {
+      const isPasswordPage = await page.evaluate(() => {
+        const path = window.location.pathname;
+        const hasPasswordForm = !!document.querySelector(
+          'form[action="/password"], form[action*="password"], input[name="password"][type="password"]'
+        );
+        return path === '/password' || hasPasswordForm;
+      });
+      if (!isPasswordPage) return false;
+
+      // Find and fill the password input
+      const pwInput = await page.$('input[name="password"][type="password"], input[id*="password"][type="password"]');
+      if (!pwInput) return false;
+
+      await pwInput.fill(SITE_PASSWORD);
+      await page.waitForTimeout(300);
+
+      // Submit — try Enter first, then submit button
+      await pwInput.press('Enter');
+      await page.waitForTimeout(500);
+      const submitBtn = await page.$('button[type="submit"], input[type="submit"], button[name="commit"]');
+      if (submitBtn) await submitBtn.click({ force: true, timeout: 3000 }).catch(() => {});
+
+      await page.waitForTimeout(2000);
+      console.log('  🔓  Store password entered automatically');
+      sseEmit('result', {
+        section: 'Setup', name: 'Store password entered automatically',
+        status: 'INFO', detail: 'Password page detected and bypassed'
+      });
+      return true;
+    } catch (_) { return false; }
+  }
+
   async function safeGoto(url, label = '') {
     for (const waitUntil of ['domcontentloaded', 'commit']) {
       try {
         await page.goto(url, { waitUntil, timeout: 30000 });
         await page.waitForTimeout(1500);
-        await handleCloudflare(); // pause if Cloudflare appears
+        await handlePasswordPage(); // auto-enter password if password page appears
+        await handleCloudflare();   // pause if Cloudflare appears
         return true;
       } catch (e) {
         if (waitUntil === 'commit') {
@@ -2259,6 +2298,7 @@ async function generateReport(results, siteUrl) {
       checkoutWidget: uiConfig.checkoutWidget || '',
       platform:      uiConfig.platform || 'shopify',
       merchant:      uiConfig.merchant || '',
+      sitePassword:  uiConfig.sitePassword || '',
     };
 
     console.log(`  🌐  Site: ${BASE_URL}`);
