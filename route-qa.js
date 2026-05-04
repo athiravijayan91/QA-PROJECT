@@ -211,7 +211,14 @@ function getFix(section, name) {
 const results = [];
 const startTime = Date.now();
 
-function log(section, name, status, detail = '', tcId = null, screenshot = null) {
+function log(section, name, status, detail = '', tcId = null) {
+  // Consume any pending screenshot (set by snap() before this call)
+  // Screenshots are attached to PASS / FAIL / WARN results only
+  let screenshot = null;
+  if (typeof _nextScreenshot !== 'undefined' && (status === 'PASS' || status === 'FAIL' || status === 'WARN')) {
+    screenshot = _nextScreenshot || null;
+    _nextScreenshot = null; // consume it so the next log() starts fresh
+  }
   const icons = { PASS: '✅', FAIL: '❌', WARN: '⚠️ ', INFO: 'ℹ️ ' };
   results.push({ section, name, status, detail, tcId });
   const icon = icons[status] || '   ';
@@ -496,17 +503,20 @@ async function runQA(RATES) {
   const page = await context.newPage();
 
   // ── Screenshot helper ─────────────────────────────────────────────────────
+  // snap() stores the screenshot in _nextScreenshot.
+  // The next log() call with PASS/FAIL/WARN automatically picks it up and clears it.
+  let _nextScreenshot = null;
   async function snap() {
     try {
-      const buf = await page.screenshot({ type: 'jpeg', quality: 30, fullPage: false });
-      return 'data:image/jpeg;base64,' + buf.toString('base64');
-    } catch(_) { return null; }
+      const buf = await page.screenshot({ type: 'jpeg', quality: 25, fullPage: false });
+      _nextScreenshot = 'data:image/jpeg;base64,' + buf.toString('base64');
+    } catch(_) { _nextScreenshot = null; }
   }
 
-  // snapLog: takes screenshot for FAIL/PASS then calls log()
+  // Legacy snapLog — now just calls snap() then log()
   async function snapLog(section, name, status, detail = '', tcId = null) {
-    const screenshot = (status === 'FAIL') ? await snap() : null;
-    log(section, name, status, detail, tcId, screenshot);
+    await snap();
+    log(section, name, status, detail, tcId);
   }
 
   page.on('console', msg => {
@@ -1071,6 +1081,7 @@ async function runQA(RATES) {
         return { hasValueProp, hasCWC, hasCheckoutBtn, snippet: text.slice(0, 200).replace(/\s+/g,' ') };
       });
 
+      await snap();
       log('Widget Confirmation', 'Preferred Checkout widget loads on cart page',
         (pcCheck.hasValueProp || pcCheck.hasCWC) ? 'PASS' : 'FAIL',
         pcCheck.hasValueProp
@@ -1080,11 +1091,13 @@ async function runQA(RATES) {
             : 'Neither value prop text nor CWC link found on cart page',
         'TC-W');
 
+      await snap();
       log('Widget Confirmation', '"Checkout Without Coverage" link present',
         pcCheck.hasCWC ? 'PASS' : 'FAIL',
         pcCheck.hasCWC ? 'CWC link found' : 'CWC link not found — Preferred Checkout widget may not be loading',
         'TC-W');
 
+      await snap();
       log('Widget Confirmation', 'Checkout button present',
         pcCheck.hasCheckoutBtn ? 'PASS' : 'WARN',
         pcCheck.hasCheckoutBtn ? 'Checkout button found' : 'Checkout button not detected');
@@ -1123,6 +1136,7 @@ async function runQA(RATES) {
                 ? `${drawerResult.count} Route item(s) found in order summary`
                 : 'Route NOT found in checkout order summary after drawer checkout',
               'TC-01a');
+            await snap();
             log('TC-01 Route Added via Checkout', 'Drawer cart → Only 1 Route (no duplicates)',
               drawerResult.count === 1 ? 'PASS' : 'FAIL',
               drawerResult.count === 1 ? 'Exactly 1 Route item ✓' : `${drawerResult.count} Route item(s) — check for duplicates`,
@@ -1147,6 +1161,7 @@ async function runQA(RATES) {
             await handleCloudflare();
             const onCheckout = /checkout|checkouts/i.test(page.url());
             if (onCheckout) {
+              await snap();
               log('TC-01 Route Added via Checkout', 'Main cart → reached checkout page', 'PASS', page.url().slice(0,80));
               await closePopups();
               const routeAtCheckout = await getRouteCountAtCheckout();
@@ -1165,6 +1180,7 @@ async function runQA(RATES) {
             }
           }
         } catch(e) {
+          await snap();
           log('TC-01 Route Added via Checkout', 'Main cart checkout error', 'FAIL',
             e.message.split('\n')[0].slice(0,150), 'TC-01b');
         }
@@ -1194,6 +1210,7 @@ async function runQA(RATES) {
         if (onCheckout) {
           await page.waitForTimeout(2000);
           const routeAtCheckout = await getRouteCountAtCheckout();
+          await snap();
           log('TC-02 Route Removed via CWC', 'Route product NOT present at checkout after CWC',
             routeAtCheckout === 0 ? 'PASS' : 'FAIL',
             routeAtCheckout === 0 ? 'Route correctly absent at checkout after CWC click' :
@@ -1203,6 +1220,7 @@ async function runQA(RATES) {
           // CWC may clear cart and redirect — check cart.js
           await safeGoto(cartUrl, 'cart after CWC');
           const routeCount = await getRouteLineItemCount(page);
+          await snap();
           log('TC-02 Route Removed via CWC', 'Route product removed from cart after CWC',
             routeCount === 0 ? 'PASS' : 'FAIL',
             routeCount === 0 ? 'Route correctly removed after CWC' : `Route still in cart (${routeCount} items)`,
@@ -1274,6 +1292,7 @@ async function runQA(RATES) {
       if (actualPremium !== null) {
         const diff = Math.abs(actualPremium - (expectedVariant ?? rawPremium));
         const ok   = diff <= 0.20;
+        await snap();
         log('TC-03 Premium Calculation', `${tierLabel} — Route variant matches expected`,
           ok ? 'PASS' : 'FAIL',
           `Expected: $${expectedVariant?.toFixed(2) ?? '?'} | Route charged: $${actualPremium.toFixed(2)}${!ok ? ' ← MISMATCH' : ''}`,
@@ -1288,6 +1307,7 @@ async function runQA(RATES) {
         const shownAmt = parseFloat(textMatch[1]);
         const target   = expectedVariant ?? rawPremium;
         const ok       = Math.abs(shownAmt - target) <= 0.20;
+        await snap();
         log('TC-03 Premium Calculation', `${tierLabel} — widget shows correct premium`,
           ok ? 'PASS' : 'FAIL',
           `Widget: $${shownAmt.toFixed(2)} | Expected: $${target.toFixed(2)}`,
@@ -1406,6 +1426,7 @@ async function runQA(RATES) {
             const newCart = await page.evaluate(async () => { const r = await fetch('/cart.js'); return r.ok ? r.json() : null; });
             const newSubtotal = (newCart?.total_price||0) / 100;
             if (newSubtotal > coverageLimit) {
+              await snap();
               log('TC-04 Widget Disappears Above Threshold',
                 `Widget hidden when cart > $${coverageLimit.toLocaleString()}`,
                 !widgetAbove.visible ? 'PASS' : 'FAIL',
@@ -1437,6 +1458,7 @@ async function runQA(RATES) {
         if (/checkout|checkouts/i.test(page.url())) {
           await page.waitForTimeout(1500);
           const r5a = await getRouteCountAtCheckout();
+          await snap();
           log('TC-05 Multi Route Checkout', 'Single product → only 1 Route at checkout',
             r5a === 1 ? 'PASS' : 'FAIL',
             `${r5a} Route item(s) at checkout`, 'TC-05a');
@@ -1463,6 +1485,7 @@ async function runQA(RATES) {
           if (/checkout|checkouts/i.test(page.url())) {
             await page.waitForTimeout(1500);
             const r5b = await getRouteCountAtCheckout();
+            await snap();
             log('TC-05 Multi Route Checkout', 'Multiple products → only 1 Route at checkout',
               r5b === 1 ? 'PASS' : 'FAIL',
               `${r5b} Route item(s) at checkout with multiple products`, 'TC-05b');
@@ -1508,9 +1531,11 @@ async function runQA(RATES) {
         }
         await page.waitForTimeout(2000);
         const rCount = await getRouteCountAtCheckout();
+        await snap();
         log('TC-06 Updates[] Checks', `${label} — Route present at checkout`,
           rCount > 0 ? 'PASS' : 'FAIL',
           `${rCount} Route item(s) found in order summary`, subContext);
+        await snap();
         log('TC-06 Updates[] Checks', `${label} — Only 1 Route item (no duplicates)`,
           rCount === 1 ? 'PASS' : 'FAIL',
           rCount === 1 ? '✓ Exactly 1 Route item' : `${rCount} Route items — check for duplicates`, subContext);
@@ -1594,6 +1619,7 @@ async function runQA(RATES) {
               foundAlternate = true;
               await waitForRouteWidget(page, 3000);
               const sub6a_after = await getCartSubtotal();
+              await snap();
               log('TC-06 Updates[] Checks', 'Subtotal updated after qty change', sub6a_after !== sub6a_before ? 'PASS' : 'WARN',
                 `Subtotal: $${sub6a_after.toFixed(2)}`);
               await checkoutAndVerifyRoute('Single product qty=3 (alternate)', 'TC-06a');
@@ -1609,6 +1635,7 @@ async function runQA(RATES) {
       } else if (qtyResult6a.changed) {
         await waitForRouteWidget(page, 3000);
         const sub6a_after = await getCartSubtotal();
+        await snap();
         log('TC-06 Updates[] Checks', 'Subtotal updated after qty change to 3', sub6a_after > sub6a_before ? 'PASS' : 'WARN',
           `Before: $${sub6a_before.toFixed(2)} → After: $${sub6a_after.toFixed(2)}`);
         await checkoutAndVerifyRoute('Single product qty=3', 'TC-06a');
@@ -1637,6 +1664,7 @@ async function runQA(RATES) {
         if (!qtyResult6b.hitLimit && qtyResult6b.changed) {
           await waitForRouteWidget(page, 3000);
           const sub6b_after = await getCartSubtotal();
+          await snap();
           log('TC-06 Updates[] Checks', 'Multi-product subtotal updated after qty change',
             sub6b_after > sub6b_before ? 'PASS' : 'WARN',
             `Before: $${sub6b_before.toFixed(2)} → After: $${sub6b_after.toFixed(2)}`);
@@ -1752,6 +1780,7 @@ async function runQA(RATES) {
           const rate = physicalSubtotal <= (RATES.tier1Max||100) ? (RATES.tier1Rate||1.95) : (RATES.tier2Rate||2.5);
           const expected = (RATES.tier1Format === 'flat' && physicalSubtotal <= (RATES.tier1Max||100)) ? rate : physicalSubtotal * (rate/100);
           const diff = Math.abs(shown - expected);
+          await snap();
           log('TC-09 Physical+Digital Premium', 'Premium calculated on physical subtotal only',
             diff <= 0.15 ? 'PASS' : 'FAIL',
             `Physical subtotal: $${physicalSubtotal.toFixed(2)} | Expected: $${expected.toFixed(2)} | Shown: $${shown.toFixed(2)}${diff>0.15?' ← MISMATCH':''}`,
@@ -1795,6 +1824,7 @@ async function runQA(RATES) {
       await page.waitForTimeout(1500);
 
       const countAfter = await getRouteLineItemCount(page);
+      await snap();
       log('TC-10 Route Auto-Removed', 'Route removed when no eligible physical items remain',
         countAfter === 0 ? 'PASS' : 'FAIL',
         countBefore > 0 && countAfter === 0 ? 'Route correctly auto-removed after physical items removed' :
@@ -1819,6 +1849,7 @@ async function runQA(RATES) {
       }
       return false;
     });
+    await snap();
     log('TC-11+12 Storefront Visibility', 'Route product NOT visible in /collections/all',
       !routeInColl ? 'PASS' : 'FAIL',
       !routeInColl ? 'Route not found in collections' : 'Route product visible in storefront collections!',
@@ -1835,6 +1866,7 @@ async function runQA(RATES) {
         }
         return false;
       });
+      await snap();
       log('TC-11+12 Storefront Visibility', 'Route product NOT in product page recommendations',
         !routeInRecs ? 'PASS' : 'FAIL',
         !routeInRecs ? 'Route not found in recommendations' : 'Route found in product page recommendations!',
@@ -1855,6 +1887,7 @@ async function runQA(RATES) {
 
       const widget13 = await findRouteWidget(page);
       const hasPremiumText = /order protected for \$[\d.]+/i.test(widget13.text || '');
+      await snap();
       log('TC-13 Value Prop', 'Widget shows "Order protected for $[amount]"',
         hasPremiumText ? 'PASS' : 'WARN',
         hasPremiumText ? 'Premium wording confirmed' : `Could not detect "Order protected for $X". Widget text: "${(widget13.text||'').slice(0,60).replace(/\s+/g,' ')}"`);
@@ -1878,6 +1911,7 @@ async function runQA(RATES) {
           const text = document.body.innerText;
           return /benefits|package protection|damage.*loss|fast refund|see details/i.test(text);
         });
+        await snap();
         log('TC-13 Value Prop', 'Value prop expands and shows benefits content',
           expanded ? 'PASS' : 'WARN',
           expanded ? 'BENEFITS section visible after clicking info icon' : 'Could not verify expansion content — check manually');
@@ -1902,6 +1936,7 @@ async function runQA(RATES) {
               hasLinks:   /file a claim|user privacy|terms of service/i.test(text),
             };
           });
+          await snap();
           log('TC-14 Route Info Modal', 'Info modal opens with correct content',
             (modalContent.hasCovered && modalContent.hasBullets) ? 'PASS' : 'WARN',
             `"We've got you covered": ${modalContent.hasCovered} | Bullets: ${modalContent.hasBullets} | Links: ${modalContent.hasLinks}`);
@@ -1939,6 +1974,7 @@ async function runQA(RATES) {
             await page.goBack({ waitUntil: 'domcontentloaded', timeout: 15000 }).catch(()=>{});
             await page.waitForTimeout(5000); // wait for BFCache handler to fire
             const routeAfter = await getRouteLineItemCount(page);
+            await snap();
             log('TC-15 BFCache', 'Route item removed after browser back navigation from checkout',
               routeAfter === 0 ? 'PASS' : 'FAIL',
               routeAfter === 0 ? 'BFCache handler fired correctly — Route removed after back navigation' :
@@ -1972,6 +2008,7 @@ async function runQA(RATES) {
       await waitForRouteWidget(page, 6000);
       const mobileWidget = await findRouteWidget(page);
       if (mobileWidget.found) {
+        await snap();
         log('Design', 'Widget not overflowing mobile viewport (375px)',
           mobileWidget.right <= 390 ? 'PASS' : 'FAIL',
           mobileWidget.right > 390 ? `Widget extends to ${Math.round(mobileWidget.right)}px` : 'Fits within 375px viewport');
@@ -1983,6 +2020,7 @@ async function runQA(RATES) {
 
   } catch (err) {
     console.error('\n❌  Fatal error during QA run:', err.message);
+    await snap();
     log('Fatal', 'QA run completed without errors', 'FAIL', err.message);
   } finally {
     await browser.close();

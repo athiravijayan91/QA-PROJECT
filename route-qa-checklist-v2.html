@@ -115,12 +115,13 @@ main{max-width:860px;margin:0 auto;padding:0 24px 60px;display:none}
 .rd-body{max-width:900px;margin:0 auto;padding:24px 24px 100px}
 .rd-section-hdr{font-size:11px;font-weight:700;color:#636366;text-transform:uppercase;letter-spacing:.8px;margin:24px 0 8px;padding-left:2px;display:flex;align-items:center;gap:8px}
 .rd-section-hdr::after{content:'';flex:1;height:1px;background:#e2e2ea}
-.rd-card{background:#fff;border:1px solid #e2e2ea;border-radius:10px;padding:12px 16px;margin-bottom:7px;display:flex;align-items:flex-start;gap:12px;animation:rdIn .18s ease}
+.rd-card{background:#fff;border:1px solid #e2e2ea;border-radius:10px;padding:0;margin-bottom:7px;display:grid;grid-template-columns:1fr 130px;align-items:stretch;overflow:hidden;animation:rdIn .18s ease}
 @keyframes rdIn{from{opacity:0;transform:translateY(-5px)}to{opacity:1;transform:none}}
 .rd-card.c-pass{border-left:3px solid #34c759}
 .rd-card.c-fail{border-left:3px solid #ff3b30;background:#fffcfc}
 .rd-card.c-warn{border-left:3px solid #ffcc00;background:#fffeee}
-.rd-card.c-info{border-left:3px solid #0071e3}
+.rd-card.c-info{border-left:3px solid #0071e3;grid-template-columns:1fr}
+.rd-card-main{display:flex;align-items:flex-start;gap:10px;padding:11px 14px}
 .rd-icon{font-size:15px;flex-shrink:0;margin-top:1px}
 .rd-content{flex:1;min-width:0}
 .rd-name{font-size:13px;font-weight:600;color:#1d1d1f;display:flex;align-items:center;gap:6px;flex-wrap:wrap}
@@ -130,6 +131,11 @@ main{max-width:860px;margin:0 auto;padding:0 24px 60px;display:none}
 .rd-fix-btn:hover{text-decoration:underline}
 .rd-fix-body{display:none;margin-top:6px;padding:10px 12px;background:#fff5f5;border-left:3px solid #ff3b30;border-radius:0 6px 6px 0;font-size:12px;color:#1d1d1f;line-height:1.6}
 .rd-fix-body.open{display:block}
+/* Screenshot column */
+.rd-screenshot-col{border-left:1px solid #f0f0f5;background:#fafafa;display:flex;align-items:center;justify-content:center;overflow:hidden;min-height:64px}
+.rd-screenshot-col img{width:130px;height:100%;object-fit:cover;object-position:top;cursor:zoom-in;display:block;transition:opacity .15s}
+.rd-screenshot-col img:hover{opacity:.85}
+.rd-screenshot-col .rd-no-ss{font-size:10px;color:#c7c7cc;text-align:center;padding:8px 6px;line-height:1.4}
 .rd-running-row{display:flex;align-items:center;gap:8px;font-size:12px;color:#636366;padding:8px 2px}
 .rd-spinner{width:13px;height:13px;border:2px solid #e2e2ea;border-top-color:#0071e3;border-radius:50%;animation:spin .7s linear infinite;flex-shrink:0}
 .rd-manual-wrap{background:#fff;border:1px solid #e2e2ea;border-radius:12px;margin-top:24px;overflow:hidden}
@@ -889,23 +895,28 @@ function rdAddCard(d) {
        <div class="rd-fix-body" id="${fixId}">${d.fix}</div>`
     : '';
 
-  const screenshotHTML = d.screenshot
-    ? `<div class="rd-screenshot">
-        <img src="${d.screenshot}" alt="screenshot"
-          style="max-width:100%;max-height:160px;border-radius:6px;border:1px solid #e2e2ea;margin-top:8px;cursor:pointer;display:block"
-          onclick="this.style.maxHeight=this.style.maxHeight==='none'?'160px':'none'" />
-        <div style="font-size:10px;color:#aeaeb2;margin-top:3px">Click image to expand</div>
-      </div>`
+  const isInfo = s === 'info';
+  const ssCol = !isInfo
+    ? `<div class="rd-screenshot-col">
+        ${d.screenshot
+          ? `<img src="${d.screenshot}" alt="test screenshot"
+               title="Click to open full size"
+               onclick="var w=window.open();w.document.write('<img src=\\''+this.src+'\\'style=\\'max-width:100%\\'>')" />`
+          : `<div class="rd-no-ss">No<br>screenshot</div>`
+        }
+       </div>`
     : '';
 
   card.innerHTML = `
-    <div class="rd-icon">${ICONS[d.status] || 'ℹ️'}</div>
-    <div class="rd-content">
-      <div class="rd-name">${d.name}<span class="rd-auto-pill">🤖 Auto</span></div>
-      ${d.detail ? `<div class="rd-detail">→ ${d.detail}</div>` : ''}
-      ${fixHTML}
-      ${screenshotHTML}
-    </div>`;
+    <div class="rd-card-main">
+      <div class="rd-icon">${ICONS[d.status] || 'ℹ️'}</div>
+      <div class="rd-content">
+        <div class="rd-name">${d.name}<span class="rd-auto-pill">🤖 Auto</span></div>
+        ${d.detail ? `<div class="rd-detail">→ ${d.detail}</div>` : ''}
+        ${fixHTML}
+      </div>
+    </div>
+    ${ssCol}`;
   feed.appendChild(card);
   card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
