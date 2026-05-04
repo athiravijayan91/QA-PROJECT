@@ -35,14 +35,22 @@ function positionWindowsSideBySide() {
   const { execSync } = require('child_process');
   try {
     execSync(`osascript << 'EOF'
+-- Detect current screen size dynamically
+tell application "Finder"
+  set screenBounds to bounds of window of desktop
+  set sw to item 3 of screenBounds
+  set sh to item 4 of screenBounds
+end tell
+set half to sw / 2 as integer
+
 tell application "Google Chrome"
   repeat with w in windows
     try
       set u to (URL of active tab of w) as string
       if u contains "localhost:3000" then
-        set bounds of w to {960, 0, 1920, 1080}
+        set bounds of w to {half, 0, sw, sh}
       else
-        set bounds of w to {0, 0, 960, 1080}
+        set bounds of w to {0, 0, half, sh}
       end if
     end try
   end repeat
@@ -203,7 +211,7 @@ function getFix(section, name) {
 const results = [];
 const startTime = Date.now();
 
-function log(section, name, status, detail = '', tcId = null) {
+function log(section, name, status, detail = '', tcId = null, screenshot = null) {
   const icons = { PASS: '✅', FAIL: '❌', WARN: '⚠️ ', INFO: 'ℹ️ ' };
   results.push({ section, name, status, detail, tcId });
   const icon = icons[status] || '   ';
@@ -212,7 +220,7 @@ function log(section, name, status, detail = '', tcId = null) {
     : '';
   console.log(`    ${icon} ${name}${suffix}`);
   const fix = status === 'FAIL' ? getFix(section, name) : null;
-  sseEmit('result', { sectionIndex: _sectionCounter, name, status, detail: detail.slice(0, 200), fix, tcId });
+  sseEmit('result', { sectionIndex: _sectionCounter, name, status, detail: detail.slice(0, 200), fix, tcId, screenshot });
 }
 
 let _sectionCounter = 0;
@@ -487,6 +495,20 @@ async function runQA(RATES) {
 
   const page = await context.newPage();
 
+  // ── Screenshot helper ─────────────────────────────────────────────────────
+  async function snap() {
+    try {
+      const buf = await page.screenshot({ type: 'jpeg', quality: 30, fullPage: false });
+      return 'data:image/jpeg;base64,' + buf.toString('base64');
+    } catch(_) { return null; }
+  }
+
+  // snapLog: takes screenshot for FAIL/PASS then calls log()
+  async function snapLog(section, name, status, detail = '', tcId = null) {
+    const screenshot = (status === 'FAIL') ? await snap() : null;
+    log(section, name, status, detail, tcId, screenshot);
+  }
+
   page.on('console', msg => {
     if (msg.type() === 'error') consoleErrors.push(msg.text());
   });
@@ -756,7 +778,7 @@ async function runQA(RATES) {
   async function checkoutFromDrawerAndVerify() {
     // Give drawer 3s to open / animate
     await page.waitForTimeout(3000);
-    await closePopups();
+    // (no closePopups here - Escape would close the drawer)
 
     let drawerOpen = await isDrawerOpen();
 
@@ -765,7 +787,7 @@ async function runQA(RATES) {
       const opened = await tryOpenCartDrawer();
       if (opened) {
         await page.waitForTimeout(2500);
-        await closePopups();
+        // (no closePopups here)
         drawerOpen = await isDrawerOpen();
       }
     }
@@ -1095,7 +1117,7 @@ async function runQA(RATES) {
           } else if (!drawerResult.pass && drawerResult.reason) {
             log('TC-01 Route Added via Checkout', 'Drawer cart → reached checkout', 'WARN', drawerResult.reason);
           } else {
-            log('TC-01 Route Added via Checkout', 'Drawer cart → Route present at checkout',
+            await snapLog('TC-01 Route Added via Checkout', 'Drawer cart → Route present at checkout',
               drawerResult.pass ? 'PASS' : 'FAIL',
               drawerResult.pass
                 ? `${drawerResult.count} Route item(s) found in order summary`
@@ -1128,11 +1150,11 @@ async function runQA(RATES) {
               log('TC-01 Route Added via Checkout', 'Main cart → reached checkout page', 'PASS', page.url().slice(0,80));
               await closePopups();
               const routeAtCheckout = await getRouteCountAtCheckout();
-              log('TC-01 Route Added via Checkout', 'Main cart → Route present at checkout',
+              await snapLog('TC-01 Route Added via Checkout', 'Main cart → Route present at checkout',
                 routeAtCheckout > 0 ? 'PASS' : 'FAIL',
                 routeAtCheckout > 0 ? `${routeAtCheckout} Route item(s) in order summary` : 'Route NOT found in checkout order summary',
                 'TC-01b');
-              log('TC-01 Route Added via Checkout', 'Main cart → Only 1 Route (no duplicates)',
+              await snapLog('TC-01 Route Added via Checkout', 'Main cart → Only 1 Route (no duplicates)',
                 routeAtCheckout === 1 ? 'PASS' : 'FAIL',
                 routeAtCheckout === 1 ? 'Exactly 1 Route item ✓' :
                 routeAtCheckout > 1 ? `${routeAtCheckout} Route items — duplicates!` : 'Route not found',
@@ -1217,110 +1239,130 @@ async function runQA(RATES) {
       return null; // above known range — extremely high subtotal
     };
 
+    // ── Helper: verify premium for current cart state ──────────────────────
+    const verifyPremiumForCart = async (tierLabel, tcId) => {
+      const cartData = await page.evaluate(async () => {
+        const r = await fetch('/cart.js'); return r.ok ? r.json() : null;
+      });
+      if (!cartData) {
+        log('TC-03 Premium Calculation', `${tierLabel} — cart data`, 'WARN', 'Could not read /cart.js'); return;
+      }
+      const allItems  = cartData.items || [];
+      const routeItem = allItems.find(i => /route/i.test((i.handle||'') + (i.title||'')));
+      const physical  = allItems.filter(i =>
+        !/route/i.test((i.handle||'') + (i.title||'')) &&
+        i.gift_card !== true && i.requires_shipping !== false);
+      const subtotal  = physical.reduce((s, i) => s + i.line_price, 0) / 100;
+      const actualPremium = routeItem ? routeItem.price / 100 : null;
+
+      const tier1Max  = RATES.tier1Max  || 100;
+      const tier1Rate = RATES.tier1Rate || 1.95;
+      const tier2Rate = RATES.tier2Rate || 2.5;
+      const tier1Fmt  = RATES.tier1Format || 'pct';
+      const inLower   = subtotal <= tier1Max;
+      const rate      = inLower ? tier1Rate : tier2Rate;
+      const fmt       = inLower ? tier1Fmt : (RATES.tier2Format || 'pct');
+      const rawPremium = fmt === 'flat' ? rate : subtotal * (rate / 100);
+      const expectedVariant = roundUpToVariant(rawPremium);
+
+      log('TC-03 Premium Calculation',
+        `${tierLabel} — subtotal $${subtotal.toFixed(2)} (${inLower ? 'lower' : 'upper'} tier @ ${fmt === 'flat' ? '$'+rate+' flat' : rate+'%'})`,
+        'INFO',
+        `Raw: $${rawPremium.toFixed(4)} → Expected variant: $${expectedVariant?.toFixed(2) ?? '(above table)'}  |  Route in cart: $${actualPremium?.toFixed(2) ?? 'not found'}`);
+
+      // Check 1: Route line item in /cart.js (most reliable)
+      if (actualPremium !== null) {
+        const diff = Math.abs(actualPremium - (expectedVariant ?? rawPremium));
+        const ok   = diff <= 0.20;
+        log('TC-03 Premium Calculation', `${tierLabel} — Route variant matches expected`,
+          ok ? 'PASS' : 'FAIL',
+          `Expected: $${expectedVariant?.toFixed(2) ?? '?'} | Route charged: $${actualPremium.toFixed(2)}${!ok ? ' ← MISMATCH' : ''}`,
+          tcId);
+      }
+
+      // Check 2: widget text ("Your order is protected for $X")
+      const pageText = await page.evaluate(() => document.body.innerText || '');
+      const textMatch = pageText.match(/order.*?protected.*?\$([\d.]+)/i)
+                     || pageText.match(/protected.*?for.*?\$([\d.]+)/i);
+      if (textMatch) {
+        const shownAmt = parseFloat(textMatch[1]);
+        const target   = expectedVariant ?? rawPremium;
+        const ok       = Math.abs(shownAmt - target) <= 0.20;
+        log('TC-03 Premium Calculation', `${tierLabel} — widget shows correct premium`,
+          ok ? 'PASS' : 'FAIL',
+          `Widget: $${shownAmt.toFixed(2)} | Expected: $${target.toFixed(2)}`,
+          tcId);
+      } else if (actualPremium === null) {
+        log('TC-03 Premium Calculation', `${tierLabel} — premium readable`, 'WARN',
+          'Neither /cart.js Route item nor widget text found — verify manually');
+      }
+    };
+
     if (productUrl) {
+      const tier1Max = RATES.tier1Max || 100;
+
+      // ── TC-03a: Lower tier test ─────────────────────────────────────────
+      // Add one product — most products will be below the tier threshold
       await clearCart();
-      await safeGoto(productUrl, 'product page (premium)');
+      await safeGoto(productUrl, 'product page (TC-03a)');
       await clickAddToCart(page);
-      await safeGoto(cartUrl, 'cart (premium)');
+      await safeGoto(cartUrl, 'cart (TC-03a)');
       await waitForRouteWidget(page, 6000);
       await page.waitForTimeout(1500);
-
       try {
-        const cartData = await page.evaluate(async () => {
-          const r = await fetch('/cart.js');
-          return r.ok ? r.json() : null;
+        // Check current subtotal — if already above tier1Max, go to tier2 test
+        const sub = await page.evaluate(async () => {
+          const r = await fetch('/cart.js'); const d = r.ok ? await r.json() : null;
+          const physical = (d?.items||[]).filter(i => !/route/i.test((i.handle||'')+(i.title||'')) && i.gift_card !== true);
+          return physical.reduce((s,i) => s + i.line_price, 0) / 100;
         });
-
-        if (cartData && cartData.total_price != null) {
-          const allItems  = cartData.items || [];
-          const routeItem = allItems.find(i => /route/i.test((i.handle||'') + (i.title||'')));
-          const nonRoute  = allItems.filter(i => !/route/i.test((i.handle||'') + (i.title||'')));
-          const physical  = nonRoute.filter(i => i.gift_card !== true && i.requires_shipping !== false);
-          const subtotal  = physical.reduce((s, i) => s + i.line_price, 0) / 100;
-
-          // Actual premium charged — Route line item price from cart (ground truth)
-          const actualPremium = routeItem ? routeItem.price / 100 : null;
-
-          const tier1Max  = RATES.tier1Max  || 100;
-          const tier1Rate = RATES.tier1Rate || 1.95;
-          const tier2Rate = RATES.tier2Rate || 2.5;
-          const tier1Fmt  = RATES.tier1Format || 'pct';
-          const inLower   = subtotal <= tier1Max;
-          const rate      = inLower ? tier1Rate : tier2Rate;
-          const fmt       = inLower ? tier1Fmt : (RATES.tier2Format || 'pct');
-
-          // Raw calculated premium
-          const rawPremium = fmt === 'flat' ? rate : subtotal * (rate / 100);
-          // Expected = round up to nearest Route variant
-          const expectedVariant = roundUpToVariant(rawPremium);
-
-          log('TC-03 Premium Calculation', `Subtotal: $${subtotal.toFixed(2)} (${inLower ? 'lower' : 'upper'} tier)`, 'INFO',
-            `Raw premium: ${fmt === 'flat' ? '$'+rate+' flat' : '$'+subtotal.toFixed(2)+' × '+rate+'% = $'+rawPremium.toFixed(4)} → Expected variant: $${expectedVariant?.toFixed(2) ?? '?'}`);
-
-          // Source 1: actual Route line item from /cart.js
-          if (actualPremium !== null) {
-            const diff = Math.abs(actualPremium - (expectedVariant ?? rawPremium));
-            const ok   = diff <= 0.20; // 1 variant step tolerance
-            log('TC-03 Premium Calculation', 'Route variant in cart matches expected premium',
-              ok ? 'PASS' : 'FAIL',
-              `Expected variant: $${expectedVariant?.toFixed(2) ?? '?'} | Route charged: $${actualPremium.toFixed(2)}${!ok ? ' ← MISMATCH' : ''}`,
-              'TC-03a');
-          } else {
-            log('TC-03 Premium Calculation', 'Route line item found in cart', 'WARN',
-              'Route item not in /cart.js yet — may need more time or Route is not inserting itself');
-          }
-
-          // Source 2: widget text on cart page ("Your order is protected for $X")
-          const pageText = await page.evaluate(() => document.body.innerText || '');
-          const textMatch = pageText.match(/order.*?protected.*?\$([\d.]+)/i)
-                         || pageText.match(/protected.*?for.*?\$([\d.]+)/i)
-                         || pageText.match(/\$([\d.]+).*?protection/i);
-          if (textMatch) {
-            const shownAmt = parseFloat(textMatch[1]);
-            const target   = expectedVariant ?? rawPremium;
-            const ok       = Math.abs(shownAmt - target) <= 0.20;
-            log('TC-03 Premium Calculation', 'Widget text shows correct premium amount',
-              ok ? 'PASS' : 'FAIL',
-              `Widget shows: $${shownAmt.toFixed(2)} | Expected: $${target.toFixed(2)}`,
-              'TC-03b');
-          } else {
-            // Last fallback: verify at checkout
-            log('TC-03 Premium Calculation', 'Widget text premium', 'INFO',
-              'Premium not visible in widget text — will verify at checkout');
-            const checkoutClicked = await clickCheckout();
-            if (checkoutClicked) {
-              await page.waitForTimeout(5000);
-              await handleCloudflare();
-              if (/checkout|checkouts/i.test(page.url())) {
-                // Read Route item price from checkout order summary
-                const checkoutPremium = await page.evaluate(() => {
-                  const text = document.body.innerText || '';
-                  // Find the Route line and grab the $ amount after it
-                  const match = text.match(/shipping protection by route[\s\S]{0,50}?\$([\d.]+)/i)
-                             || text.match(/\$([\d.]+)[\s\S]{0,10}?2\.15/i); // fallback
-                  return match ? parseFloat(match[1]) : null;
-                });
-                if (checkoutPremium !== null) {
-                  const target = expectedVariant ?? rawPremium;
-                  const ok = Math.abs(checkoutPremium - target) <= 0.20;
-                  log('TC-03 Premium Calculation', 'Checkout order summary shows correct premium',
-                    ok ? 'PASS' : 'FAIL',
-                    `Checkout shows: $${checkoutPremium.toFixed(2)} | Expected: $${target.toFixed(2)}`,
-                    'TC-03c');
-                } else {
-                  log('TC-03 Premium Calculation', 'Premium at checkout', 'WARN',
-                    'Could not read premium from checkout order summary — verify manually');
-                }
-                // Go back to continue tests
-                await page.goBack().catch(() => safeGoto(cartUrl, 'cart'));
-              }
-            }
-          }
+        if (sub <= tier1Max) {
+          await verifyPremiumForCart('Lower tier', 'TC-03a');
         } else {
-          log('TC-03 Premium Calculation', 'Premium calculation', 'WARN', 'Could not read /cart.js');
+          log('TC-03 Premium Calculation', 'Lower tier', 'INFO',
+            `Product price ($${sub.toFixed(2)}) already above tier threshold — skipping lower tier test`);
         }
       } catch(e) {
-        log('TC-03 Premium Calculation', 'Premium calculation', 'WARN', e.message.split('\n')[0]);
+        log('TC-03 Premium Calculation', 'Lower tier', 'WARN', e.message.split('\n')[0]);
+      }
+
+      // ── TC-03b: Upper tier test ─────────────────────────────────────────
+      // Keep adding products until subtotal exceeds tier1Max
+      await testGap(1500);
+      log('TC-03 Premium Calculation', 'Upper tier test — building cart above threshold', 'INFO',
+        `Adding products to push subtotal above $${tier1Max}`);
+
+      // Keep adding products from candidate list until subtotal > tier1Max
+      const allCandidates = [productUrl, productUrl2, ...await page.evaluate(async (base) => {
+        const r = await fetch(base + '/products.json?limit=20&sort_by=price-descending');
+        if (!r.ok) return [];
+        const d = await r.json();
+        return (d.products||[]).map(p => base + '/products/' + p.handle);
+      }, BASE_URL).catch(() => [])].filter(Boolean);
+
+      let upperSubtotal = 0;
+      let attempts = 0;
+      while (upperSubtotal <= tier1Max && attempts < 15) {
+        attempts++;
+        const addUrl = allCandidates[attempts % allCandidates.length] || productUrl;
+        await safeGoto(addUrl, `TC-03b product ${attempts}`);
+        await clickAddToCart(page);
+        upperSubtotal = await page.evaluate(async () => {
+          const r = await fetch('/cart.js'); const d = r.ok ? await r.json() : null;
+          return (d?.items||[]).filter(i => !/route/i.test((i.handle||'')+(i.title||'')))
+            .reduce((s,i) => s + i.line_price, 0) / 100;
+        });
+      }
+
+      if (upperSubtotal > tier1Max) {
+        await safeGoto(cartUrl, 'cart (TC-03b upper tier)');
+        await waitForRouteWidget(page, 6000);
+        await page.waitForTimeout(1500);
+        try { await verifyPremiumForCart('Upper tier', 'TC-03b'); }
+        catch(e) { log('TC-03 Premium Calculation', 'Upper tier', 'WARN', e.message.split('\n')[0]); }
+      } else {
+        log('TC-03 Premium Calculation', 'Upper tier test', 'WARN',
+          `Could not push cart above $${tier1Max} threshold after ${attempts} attempts — verify upper tier premium manually`);
       }
     } else {
       log('TC-03 Premium Calculation', 'Premium calculation', 'WARN', 'No product URL found');
@@ -1619,20 +1661,41 @@ async function runQA(RATES) {
     {
       await clearCart();
       const giftCardData = await page.evaluate(async () => {
+        // Method 1: query by product_type=Gift+Card
         try {
           const r = await fetch('/products.json?product_type=Gift+Card&limit=5');
           const d = r.ok ? await r.json() : null;
           if (d?.products?.length) {
-            const p = d.products[0];
-            const v = p.variants?.[0];
-            return v ? { id: v.id, title: p.title } : null;
+            for (const p of d.products) {
+              // Confirm this is actually a digital product via /products/<handle>.js
+              try {
+                const pjson = await fetch(`/products/${p.handle}.js`);
+                if (pjson.ok) {
+                  const pdata = await pjson.json();
+                  // Must be gift_card OR requires_shipping === false on all variants
+                  const isDigital = pdata.gift_card === true ||
+                    (pdata.variants || []).every(v => v.requires_shipping === false);
+                  if (isDigital) {
+                    const v = pdata.variants?.[0];
+                    return v ? { id: v.id, title: pdata.title } : null;
+                  }
+                }
+              } catch(_) {}
+            }
           }
         } catch(_) {}
-        // Try common gift card slugs
-        for (const slug of ['gift-card', 'gift-cards', 'e-gift-card', 'giftcard']) {
+        // Method 2: try common gift card URL slugs and verify
+        for (const slug of ['gift-card', 'gift-cards', 'e-gift-card', 'giftcard', 'gift_card']) {
           try {
             const r = await fetch(`/products/${slug}.js`);
-            if (r.ok) { const p = await r.json(); return { id: p.variants[0]?.id, title: p.title }; }
+            if (r.ok) {
+              const p = await r.json();
+              const isDigital = p.gift_card === true ||
+                (p.variants || []).every(v => v.requires_shipping === false);
+              if (isDigital && p.variants?.[0]) {
+                return { id: p.variants[0].id, title: p.title };
+              }
+            }
           } catch(_) {}
         }
         return null;
@@ -1645,7 +1708,7 @@ async function runQA(RATES) {
         await waitForRouteWidget(page, 6000);
         await page.waitForTimeout(1500);
         const widgetDigital = await findRouteWidget(page);
-        log('TC-08 Digital-Only Cart', `Route widget absent for digital-only cart ("${giftCardData.title}")`,
+        await snapLog('TC-08 Digital-Only Cart', `Route widget absent for digital-only cart ("${giftCardData.title}")`,
           !widgetDigital.visible ? 'PASS' : 'FAIL',
           widgetDigital.visible ? 'Route widget is showing for digital-only cart — should be hidden' :
           'Route widget correctly hidden for digital-only cart', 'TC-08');

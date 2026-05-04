@@ -889,12 +889,22 @@ function rdAddCard(d) {
        <div class="rd-fix-body" id="${fixId}">${d.fix}</div>`
     : '';
 
+  const screenshotHTML = d.screenshot
+    ? `<div class="rd-screenshot">
+        <img src="${d.screenshot}" alt="screenshot"
+          style="max-width:100%;max-height:160px;border-radius:6px;border:1px solid #e2e2ea;margin-top:8px;cursor:pointer;display:block"
+          onclick="this.style.maxHeight=this.style.maxHeight==='none'?'160px':'none'" />
+        <div style="font-size:10px;color:#aeaeb2;margin-top:3px">Click image to expand</div>
+      </div>`
+    : '';
+
   card.innerHTML = `
     <div class="rd-icon">${ICONS[d.status] || 'ℹ️'}</div>
     <div class="rd-content">
       <div class="rd-name">${d.name}<span class="rd-auto-pill">🤖 Auto</span></div>
       ${d.detail ? `<div class="rd-detail">→ ${d.detail}</div>` : ''}
       ${fixHTML}
+      ${screenshotHTML}
     </div>`;
   feed.appendChild(card);
   card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
