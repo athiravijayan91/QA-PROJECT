@@ -477,11 +477,12 @@ async function runQA(RATES) {
     browser = await chromium.launch({ headless: HEADLESS, slowMo: HEADLESS ? 0 : 100, args: windowArgs });
     console.log('  🌐  Using bundled Chromium');
   }
-  // Re-position both windows now that Playwright's browser is open:
-  // dashboard stays right, test browser goes left
+  // Re-position both windows now that Playwright's browser is open.
+  // Run twice: once after 2s (window opens), once after 5s (window fully rendered).
   if (!HEADLESS) {
-    await new Promise(r => setTimeout(r, 1500)); // let Playwright window open
+    await new Promise(r => setTimeout(r, 2000));
     positionWindowsSideBySide();
+    setTimeout(() => positionWindowsSideBySide(), 4000); // second pass to catch slow openers
   }
 
   const context = await browser.newContext({

@@ -113,8 +113,28 @@ main{max-width:860px;margin:0 auto;padding:0 24px 60px;display:none}
 .rd-prog-bar{height:4px;background:#34c759;transition:width .4s ease;width:0}
 .rd-prog-label{background:#111827;color:rgba(255,255,255,0.45);font-size:11px;padding:5px 32px;display:flex;justify-content:space-between}
 .rd-body{max-width:900px;margin:0 auto;padding:24px 24px 100px}
-.rd-section-hdr{font-size:11px;font-weight:700;color:#636366;text-transform:uppercase;letter-spacing:.8px;margin:24px 0 8px;padding-left:2px;display:flex;align-items:center;gap:8px}
-.rd-section-hdr::after{content:'';flex:1;height:1px;background:#e2e2ea}
+/* ── Section header — bold visible band ── */
+.rd-section-hdr{
+  font-size:13px;font-weight:800;color:#1a1a2e;
+  text-transform:uppercase;letter-spacing:1px;
+  margin:28px 0 10px;
+  padding:10px 16px;
+  background:linear-gradient(90deg,#1a1a2e 0%,#2d2d4e 100%);
+  color:#fff;
+  border-radius:10px;
+  display:flex;align-items:center;gap:10px;
+  box-shadow:0 2px 8px rgba(26,26,46,.18);
+}
+.rd-section-hdr .sn{
+  background:rgba(255,255,255,.15);
+  border-radius:6px;padding:2px 9px;
+  font-size:11px;font-weight:700;letter-spacing:.5px;flex-shrink:0
+}
+.rd-section-hdr .st{flex:1}
+.rd-section-hdr .sb{font-size:11px;font-weight:600;padding:2px 10px;border-radius:20px;flex-shrink:0}
+.rd-section-hdr .sb.all-pass{background:#34c759;color:#fff}
+.rd-section-hdr .sb.has-fail{background:#ff3b30;color:#fff}
+.rd-section-hdr .sb.has-warn{background:#ffcc00;color:#1a1a2e}
 /* ── Result card animations ── */
 @keyframes rdIn{from{opacity:0;transform:translateY(-6px)}to{opacity:1;transform:none}}
 @keyframes rdShake{0%,100%{transform:translateX(0)}15%{transform:translateX(-5px)}30%{transform:translateX(5px)}45%{transform:translateX(-4px)}60%{transform:translateX(4px)}75%{transform:translateX(-2px)}90%{transform:translateX(2px)}}
@@ -142,8 +162,17 @@ main{max-width:860px;margin:0 auto;padding:0 24px 60px;display:none}
 .rd-fix-btn:hover{text-decoration:underline}
 .rd-fix-body{display:none;margin-top:6px;padding:10px 12px;background:#fff5f5;border-left:3px solid #ff3b30;border-radius:0 6px 6px 0;font-size:12px;color:#1d1d1f;line-height:1.6}
 .rd-fix-body.open{display:block}
-/* Fun emoji burst on pass */
-.rd-card.c-pass .rd-icon::after{content:'✨';font-size:10px;position:absolute;margin-left:-4px;margin-top:-6px;animation:rdConfetti .7s ease .2s forwards;opacity:0}
+/* Animated GIF-style pass/fail indicators */
+.rd-anim{display:inline-block;vertical-align:middle;margin-right:6px}
+/* Pass: rotating sparkle ring */
+@keyframes rdSpin{to{transform:rotate(360deg)}}
+@keyframes rdFadeIn{from{opacity:0;transform:scale(.5)}to{opacity:1;transform:scale(1)}}
+@keyframes rdPulseRed{0%,100%{box-shadow:0 0 0 0 rgba(255,59,48,.4)}50%{box-shadow:0 0 0 8px rgba(255,59,48,0)}}
+.anim-pass{width:22px;height:22px;border-radius:50%;background:#34c759;display:inline-flex;align-items:center;justify-content:center;animation:rdFadeIn .3s ease,rdPop .4s ease .1s;position:relative}
+.anim-pass::after{content:'';position:absolute;inset:-3px;border-radius:50%;border:2px solid rgba(52,199,89,.4);animation:rdSpin 2s linear infinite}
+.anim-fail{width:22px;height:22px;border-radius:50%;background:#ff3b30;display:inline-flex;align-items:center;justify-content:center;animation:rdFadeIn .3s ease,rdShake .5s ease .15s,rdPulseRed 1.5s ease 1s infinite}
+.anim-warn{width:22px;height:22px;border-radius:50%;background:#ffcc00;display:inline-flex;align-items:center;justify-content:center;animation:rdFadeIn .3s ease}
+.anim-pass svg,.anim-fail svg,.anim-warn svg{width:13px;height:13px}
 /* Screenshot column */
 .rd-screenshot-col{border-left:1px solid #f0f0f5;background:#f8f8fa;display:flex;align-items:center;justify-content:center;overflow:hidden;min-height:72px;position:relative}
 .rd-screenshot-col img{width:140px;height:100%;object-fit:cover;object-position:top center;cursor:zoom-in;display:block;transition:transform .15s}
@@ -868,9 +897,46 @@ function rdAddSectionHeader(title) {
   if (!feed) return;
   const el = document.createElement('div');
   el.className = 'rd-section-hdr';
-  el.textContent = title;
+  // Split "2 · TC-01: Route Added…" into number + rest
+  const m = title.match(/^(\d+)\s*[·•\-]\s*(.+)$/);
+  if (m) {
+    el.innerHTML = `<span class="sn">${m[1]}</span><span class="st">${m[2]}</span><span class="sb" id="sh-badge-${m[1]}">Running…</span>`;
+    el.dataset.section = m[1];
+  } else {
+    el.innerHTML = `<span class="st">${title}</span>`;
+  }
   feed.appendChild(el);
   rdCurrentSection = title;
+  rdCurrentSectionEl = el;
+}
+let rdCurrentSectionEl = null;
+
+function rdUpdateSectionBadge() {
+  if (!rdCurrentSectionEl) return;
+  const badge = rdCurrentSectionEl.querySelector('.sb');
+  if (!badge) return;
+  // Count results in current section
+  const section = rdCurrentSectionEl.querySelector('.st')?.textContent || '';
+  const inSection = rdResults.filter(r => (rdCurrentSectionEl.dataset.section && rdResults.indexOf(r) >= 0));
+  // Simple heuristic: scan all cards after this header
+  const feed = document.getElementById('rd-feed');
+  if (!feed) return;
+  const headers = [...feed.querySelectorAll('.rd-section-hdr')];
+  const thisIdx = headers.indexOf(rdCurrentSectionEl);
+  const nextHdr = headers[thisIdx + 1];
+  const cards = [...feed.querySelectorAll('.rd-card')];
+  let inSec = false, fails = 0, warns = 0, passes = 0;
+  for (const c of cards) {
+    if (c.previousElementSibling === rdCurrentSectionEl || (inSec && !nextHdr)) inSec = true;
+    if (nextHdr && c.compareDocumentPosition(nextHdr) & Node.DOCUMENT_POSITION_FOLLOWING) inSec = false;
+    if (!inSec) continue;
+    if (c.classList.contains('c-fail')) fails++;
+    else if (c.classList.contains('c-warn')) warns++;
+    else if (c.classList.contains('c-pass')) passes++;
+  }
+  if (fails > 0) { badge.textContent = `❌ ${fails} failed`; badge.className = 'sb has-fail'; }
+  else if (warns > 0) { badge.textContent = `⚠️ ${warns} notes`; badge.className = 'sb has-warn'; }
+  else if (passes > 0) { badge.textContent = '✅ All passed'; badge.className = 'sb all-pass'; }
 }
 
 function rdAddCard(d) {
@@ -890,8 +956,13 @@ function rdAddCard(d) {
        <div class="rd-fix-body" id="${fixId}">${d.fix}</div>`
     : '';
 
-  const BADGE_TEXT = { pass:'✅ PASSED', fail:'❌ FAILED', warn:'⚠️ NOTE', info:'ℹ️ INFO' };
-  const EMOJIS     = { pass:'🎉', fail:'🚨', warn:'⚡', info:'' };
+  const BADGE_TEXT = { pass:'PASSED', fail:'FAILED', warn:'NOTE', info:'INFO' };
+  const ANIM_ICON = {
+    pass: `<span class="rd-anim"><span class="anim-pass"><svg viewBox="0 0 13 13" fill="none"><path d="M2 6.5l3 3 6-6" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></span></span>`,
+    fail: `<span class="rd-anim"><span class="anim-fail"><svg viewBox="0 0 13 13" fill="none"><path d="M3 3l7 7M10 3l-7 7" stroke="#fff" stroke-width="2" stroke-linecap="round"/></svg></span></span>`,
+    warn: `<span class="rd-anim"><span class="anim-warn"><svg viewBox="0 0 13 13" fill="none"><path d="M6.5 4v3.5M6.5 9.5v.5" stroke="#1a1a2e" stroke-width="2" stroke-linecap="round"/></svg></span></span>`,
+    info: `<span style="font-size:16px">ℹ️</span>`,
+  };
   const isInfo = s === 'info';
 
   const ssCol = !isInfo
@@ -899,7 +970,7 @@ function rdAddCard(d) {
         ${d.screenshot
           ? `<img src="${d.screenshot}" alt="test screenshot"
                title="Click to open full size"
-               onclick="var w=window.open();w.document.write('<html><body style=margin:0><img src=\\''+this.src+'\\'style=\\'width:100%;display:block\\'></body></html>')" />`
+               onclick="var w=window.open();w.document.write('<html><body style=\\'margin:0;background:#000\\'><img src=\\''+this.src+'\\'style=\\'max-width:100%;display:block\\'></body></html>')" />`
           : `<div class="rd-no-ss">📷<br>No screenshot</div>`
         }
        </div>`
@@ -907,7 +978,7 @@ function rdAddCard(d) {
 
   card.innerHTML = `
     <div class="rd-card-main">
-      <div class="rd-icon" style="position:relative">${ICONS[d.status] || 'ℹ️'} ${EMOJIS[s]||''}</div>
+      <div class="rd-icon">${ANIM_ICON[s] || ICONS[d.status] || 'ℹ️'}</div>
       <div class="rd-content">
         <div class="rd-badge b-${s}">${BADGE_TEXT[s]||s.toUpperCase()}</div>
         <div class="rd-name">${d.name}<span class="rd-auto-pill">🤖 Auto</span></div>
@@ -916,6 +987,9 @@ function rdAddCard(d) {
       </div>
     </div>
     ${ssCol}`;
+
+  // Update section badge with live pass/fail count
+  setTimeout(rdUpdateSectionBadge, 50);
   feed.appendChild(card);
   card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
