@@ -742,6 +742,9 @@ async function runQA(RATES) {
     return page.evaluate(() => {
       // Both hyphen, underscore, and BEM modifier variants (themes differ greatly)
       const drawerSelectors = [
+        // Cart notification popup (e.g. MTS Dawn theme: id="cart-notification")
+        '#cart-notification', '[id*="cart-notification"]', '[class*="cart-notification"]',
+        '[aria-label*="added to your cart" i]', '[aria-label*="item added" i]',
         // Hyphen variants
         '.cart-drawer', '[class*="cart-drawer"]', '[id*="cart-drawer"]', '[id*="CartDrawer"]',
         '.cart_drawer', '[class*="cart_drawer"]', '[id*="cart_drawer"]',
@@ -754,7 +757,6 @@ async function runQA(RATES) {
         '.cart-aside',  '[class*="cart-aside"]',  '[class*="cart_aside"]',
         '.cart-slide',  '[class*="cart-slide"]',  '[class*="cart_slide"]',
         '.cart-sidebar','[class*="cart-sidebar"]','[class*="cart_sidebar"]',
-        '.cart-notification','[class*="cart-notification"]',
         '.drawer',      '[class*="side-cart"]',   '[class*="mini-cart"]',
         '[class*="fly-cart"]', '[class*="slidecart"]',
       ];
@@ -814,6 +816,9 @@ async function runQA(RATES) {
     }
     // Try within known drawer containers (both hyphen and underscore)
     const drawerContainerSels = [
+      // Cart notification popup (MTS Dawn theme style)
+      '#cart-notification', '[id*="cart-notification"]', '[class*="cart-notification"]',
+      '[aria-label*="added to your cart" i]',
       // Modal-based (e.g. Verillas: modal--cart modal--right modal--dark)
       '[class*="modal--cart"]', '[class*="modal-cart"]',
       'div[role="dialog"][class*="cart"]',
@@ -1229,23 +1234,28 @@ async function runQA(RATES) {
           log('TC-01 Route Added via Checkout', 'Drawer cart checkout error', 'WARN', e.message.slice(0,120));
         }
 
-        // ── TC-01b: Main cart page checkout ──────────────────────────────
-        await safeGoto(cartUrl, 'main cart (TC-01b)');
-        await closePopups();
-        await waitForRouteWidget(page, 6000);
-        await page.waitForTimeout(2000);
-        try {
-          const checkoutClicked = await clickCheckout();
-          if (!checkoutClicked) {
-            log('TC-01 Route Added via Checkout', 'Main cart → checkout button clicked', 'WARN',
-              'Checkout button not found on main cart page — check if cart uses a custom button');
-          } else {
+        // ── TC-01b: Main cart page checkout — retry up to 3 times ───────
+        let checkoutReached = false;
+        for (let attempt = 1; attempt <= 3 && !checkoutReached; attempt++) {
+          await safeGoto(cartUrl, `main cart (TC-01b attempt ${attempt})`);
+          await closePopups();
+          await waitForRouteWidget(page, 6000);
+          await page.waitForTimeout(2000);
+          try {
+            const checkoutClicked = await clickCheckout();
+            if (!checkoutClicked) {
+              if (attempt === 3) log('TC-01 Route Added via Checkout', 'Main cart → checkout button clicked', 'WARN',
+                'Checkout button not found after 3 attempts — check if cart uses a custom button');
+              continue;
+            }
             await page.waitForTimeout(5000);
             await handleCloudflare();
             const onCheckout = /checkout|checkouts/i.test(page.url());
             if (onCheckout) {
+              checkoutReached = true;
               await snap();
-              log('TC-01 Route Added via Checkout', 'Main cart → reached checkout page', 'PASS', page.url().slice(0,80));
+              log('TC-01 Route Added via Checkout', 'Main cart → reached checkout page',
+                'PASS', `${page.url().slice(0,80)}${attempt > 1 ? ` (attempt ${attempt})` : ''}`);
               await closePopups();
               const routeAtCheckout = await getRouteCountAtCheckout();
               await snapLog('TC-01 Route Added via Checkout', 'Main cart → Route present at checkout',
@@ -1257,15 +1267,17 @@ async function runQA(RATES) {
                 routeAtCheckout === 1 ? 'Exactly 1 Route item ✓' :
                 routeAtCheckout > 1 ? `${routeAtCheckout} Route items — duplicates!` : 'Route not found',
                 'TC-01b');
-            } else {
+            } else if (attempt === 3) {
               log('TC-01 Route Added via Checkout', 'Main cart → checkout navigation', 'WARN',
-                `Did not reach checkout — current URL: ${page.url().slice(0,80)}`);
+                `Did not reach checkout after 3 attempts — URL: ${page.url().slice(0,80)}`);
+            }
+          } catch(e) {
+            if (attempt === 3) {
+              await snap();
+              log('TC-01 Route Added via Checkout', 'Main cart checkout error', 'FAIL',
+                e.message.split('\n')[0].slice(0,150), 'TC-01b');
             }
           }
-        } catch(e) {
-          await snap();
-          log('TC-01 Route Added via Checkout', 'Main cart checkout error', 'FAIL',
-            e.message.split('\n')[0].slice(0,150), 'TC-01b');
         }
       }
     } else {
@@ -2020,12 +2032,22 @@ async function runQA(RATES) {
       await waitForRouteWidget(page, 6000);
       await page.waitForTimeout(1500);
 
-      const widget13 = await findRouteWidget(page);
-      const hasPremiumText = /order protected for \$[\d.]+/i.test(widget13.text || '');
+      // For Preferred Checkout: value prop is the bar above the checkout button
+      // showing "Your order is protected for $X.XX" — scan full page text
+      const valuePropResult = await page.evaluate(() => {
+        const text = document.body.innerText || '';
+        // Match "Order protected for $X" / "Your order is protected for $X"
+        const m = text.match(/(?:your\s+)?order\s+(?:is\s+)?protected\s+for\s+\$([\d.]+)/i)
+               || text.match(/protected\s+for\s+\$([\d.]+)/i)
+               || text.match(/order\s+protected\s+\$([\d.]+)/i);
+        return { found: !!m, amount: m ? m[1] : null, snippet: text.slice(0,300).replace(/\s+/g,' ') };
+      });
       await snap();
       log('TC-13 Value Prop', 'Widget shows "Order protected for $[amount]"',
-        hasPremiumText ? 'PASS' : 'WARN',
-        hasPremiumText ? 'Premium wording confirmed' : `Could not detect "Order protected for $X". Widget text: "${(widget13.text||'').slice(0,60).replace(/\s+/g,' ')}"`);
+        valuePropResult.found ? 'PASS' : 'WARN',
+        valuePropResult.found
+          ? `✓ Value prop text found: "Order protected for $${valuePropResult.amount}"`
+          : 'Could not detect "Order protected for $X" on cart page — verify the Preferred Checkout widget is loaded');
 
       // Try clicking info icon for expand check
       const infoIconSelectors = [

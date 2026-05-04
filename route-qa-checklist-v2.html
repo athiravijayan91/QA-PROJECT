@@ -218,9 +218,12 @@ main{max-width:860px;margin:0 auto;padding:0 24px 60px;display:none}
 .fr-score .big{font-size:36px;font-weight:800;line-height:1}
 .fr-score .lbl{font-size:11px;opacity:.55;margin-top:2px;text-transform:uppercase;letter-spacing:.5px}
 .fr-stats{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:20px}
-.fr-stat{background:#fff;border:1px solid #e2e2ea;border-radius:12px;padding:16px;text-align:center}
+.fr-stat{background:#fff;border:1px solid #e2e2ea;border-radius:12px;padding:16px;text-align:center;cursor:pointer;transition:transform .15s,box-shadow .15s;user-select:none}
+.fr-stat:hover{transform:translateY(-2px);box-shadow:0 4px 16px rgba(0,0,0,.1)}
+.fr-stat.active-filter{transform:translateY(-3px);box-shadow:0 6px 20px rgba(0,0,0,.15);outline:3px solid currentColor}
 .fr-stat .n{font-size:32px;font-weight:800;line-height:1}
 .fr-stat .l{font-size:11px;color:#636366;margin-top:4px;font-weight:600;text-transform:uppercase;letter-spacing:.5px}
+.fr-stat .hint{font-size:10px;color:#aeaeb2;margin-top:3px}
 .fr-stat.p{border-color:#34c759;background:#f0fdf4}.fr-stat.p .n{color:#1a7a4a}
 .fr-stat.f{border-color:#ff3b30;background:#fff5f5}.fr-stat.f .n{color:#c0392b}
 .fr-stat.w{border-color:#ffcc00;background:#fffdf0}.fr-stat.w .n{color:#b07d00}
@@ -826,9 +829,10 @@ function showFinalReport(data) {
   </div>
 
   <div class="fr-stats">
-    <div class="fr-stat p"><div class="n">${pass}</div><div class="l">✅ Passed</div></div>
-    <div class="fr-stat f"><div class="n">${fail}</div><div class="l">❌ Failed</div></div>
-    <div class="fr-stat w"><div class="n">${warn}</div><div class="l">⚠️ Warnings</div></div>
+    <div class="fr-stat d" onclick="frFilter('all',this)" title="Show all results"><div class="n">${total}</div><div class="l">All Checks</div><div class="hint">Click to show all</div></div>
+    <div class="fr-stat p" onclick="frFilter('pass',this)" title="Show only passed"><div class="n">${pass}</div><div class="l">✅ Passed</div><div class="hint">Click to filter</div></div>
+    <div class="fr-stat f" onclick="frFilter('fail',this)" title="Show only failed"><div class="n">${fail}</div><div class="l">❌ Failed</div><div class="hint">Click to filter</div></div>
+    <div class="fr-stat w" onclick="frFilter('warn',this)" title="Show only warnings · Notes from automated tests that need manual verification"><div class="n">${warn}</div><div class="l">⚠️ Warnings</div><div class="hint">Click to filter</div></div>
     <div class="fr-stat d"><div class="n">${total}</div><div class="l">Total checks</div></div>
   </div>`;
 
@@ -916,6 +920,37 @@ function showFinalReport(data) {
   // Update action bar
   document.getElementById('rd-action-lbl').textContent =
     fail === 0 ? '🎉 All checks passed — ready to save' : `⚠️ ${fail} failed · ${pass} passed · ${warn} warnings`;
+}
+
+// ── Final report filter tabs ──────────────────────────────────────────────
+// Clicking a stat box filters "All Results by Section" to show only that status
+let _frActiveFilter = 'all';
+function frFilter(status, clickedEl) {
+  _frActiveFilter = status;
+  // Toggle active style on clicked stat box
+  document.querySelectorAll('.fr-stat').forEach(s => s.classList.remove('active-filter'));
+  if (clickedEl) clickedEl.classList.add('active-filter');
+
+  // Show/hide rows based on filter
+  document.querySelectorAll('.fr-row').forEach(row => {
+    const cls = [...row.classList];
+    if (status === 'all') {
+      row.style.display = '';
+    } else if (status === 'pass') {
+      row.style.display = cls.includes('pass') ? '' : 'none';
+    } else if (status === 'fail') {
+      row.style.display = cls.includes('fail') ? '' : 'none';
+    } else if (status === 'warn') {
+      row.style.display = cls.includes('warn') ? '' : 'none';
+    }
+  });
+
+  // Show/hide entire sections if all their rows are hidden
+  document.querySelectorAll('.fr-section').forEach(sec => {
+    const rows = sec.querySelectorAll('.fr-row');
+    const anyVisible = [...rows].some(r => r.style.display !== 'none');
+    sec.style.display = anyVisible || status === 'all' ? '' : 'none';
+  });
 }
 
 // ── Results Dashboard State ───────────────────────────────────────────────
