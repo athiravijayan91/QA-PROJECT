@@ -653,10 +653,16 @@ async function runQA(RATES) {
   // ── Helper: detect if a cart drawer/modal is currently open ───────────────
   async function isDrawerOpen() {
     return page.evaluate(() => {
-      // Both hyphen and underscore variants (themes differ)
+      // Both hyphen, underscore, and BEM modifier variants (themes differ greatly)
       const drawerSelectors = [
+        // Hyphen variants
         '.cart-drawer', '[class*="cart-drawer"]', '[id*="cart-drawer"]', '[id*="CartDrawer"]',
         '.cart_drawer', '[class*="cart_drawer"]', '[id*="cart_drawer"]',
+        // Modal-based cart (e.g. Verillas uses class="modal--cart modal modal--right modal--dark")
+        '[class*="modal--cart"]', '[class*="modal-cart"]',
+        'div[role="dialog"][class*="cart"]',
+        'div[role="dialog"][aria-labelledby*="cart"]',
+        // Other patterns
         '.cart-modal',  '[class*="cart-modal"]',  '[class*="cart_modal"]',
         '.cart-aside',  '[class*="cart-aside"]',  '[class*="cart_aside"]',
         '.cart-slide',  '[class*="cart-slide"]',  '[class*="cart_slide"]',
@@ -671,16 +677,15 @@ async function runQA(RATES) {
           if (!el) continue;
           const r = el.getBoundingClientRect();
           const style = window.getComputedStyle(el);
-          // Must be visible AND have non-zero size
           if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') continue;
           if (r.width > 0 && r.height > 50) return true;
         } catch(_) {}
       }
-      // Body class patterns — many themes add a class when drawer opens
+      // Body/html class patterns — themes add a class when cart opens
       const bodyClass = (document.body.className || '') + ' ' + (document.documentElement.className || '');
-      if (/cart.*open|open.*cart|is-not-scrollable|drawer.*active|active.*drawer|cart.*visible|overlay.*active/i.test(bodyClass)) return true;
-      // Check if any Route widget is visible inside a potential drawer area
-      const routeWidget = document.querySelector('[data-route-widget], [class*="route-widget"], [id*="route-widget"]');
+      if (/cart.*open|open.*cart|is-not-scrollable|u-scroll-disabled|drawer.*active|active.*drawer|cart.*visible|overlay.*active|modal.*open|open.*modal/i.test(bodyClass)) return true;
+      // Route widget visible somewhere on page = cart must be open
+      const routeWidget = document.querySelector('[data-route-widget], [class*="route-widget"], [id*="route-widget"], [data-route-modal]');
       if (routeWidget) {
         const r = routeWidget.getBoundingClientRect();
         const style = window.getComputedStyle(routeWidget);
@@ -722,6 +727,11 @@ async function runQA(RATES) {
     }
     // Try within known drawer containers (both hyphen and underscore)
     const drawerContainerSels = [
+      // Modal-based (e.g. Verillas: modal--cart modal--right modal--dark)
+      '[class*="modal--cart"]', '[class*="modal-cart"]',
+      'div[role="dialog"][class*="cart"]',
+      'div[role="dialog"][aria-labelledby*="cart"]',
+      // Standard patterns
       '[class*="cart-drawer"]', '[class*="cart_drawer"]', '[id*="cart-drawer"]', '[id*="CartDrawer"]',
       '[class*="cart-aside"]',  '[class*="cart_aside"]',
       '[class*="cart-modal"]',  '[class*="cart_modal"]',
@@ -820,23 +830,42 @@ async function runQA(RATES) {
   // ── Helper: count Route items on checkout page ────────────────────────────
   // Specifically looks for 'Shipping Protection by Route' as shown in checkout order summary
   // Shared scanner: finds "Shipping Protection by Route" anywhere on page
+  // Count Route as PRODUCT ENTRIES (rows/line items), not raw text occurrences.
+  // A single Route item in checkout may appear many times in the DOM (title, aria-label,
+  // hidden copies, image alt) — counting those gives false "3 duplicates" results.
   const scanPageForRoute = () => page.evaluate(() => {
     const fullText = document.body.innerText || '';
-    // Primary: check full page text first (fastest, most reliable)
-    if (/shipping protection by route/i.test(fullText)) {
-      // Count occurrences by scanning leaf nodes
-      const allEls = document.querySelectorAll('td, li, div, span, p, th, dt, dd, bdi, strong, h1, h2, h3');
+    if (!/shipping protection by route/i.test(fullText)
+        && !/route.*protection|route.*shipping/i.test(fullText)) return 0;
+
+    // Try to count by distinct PRODUCT ROW containers in checkout order summary
+    const rowSelectors = [
+      // Shopify native checkout line item containers
+      '[class*="product--cart"]',
+      '[class*="line-item"]',
+      '[class*="order-summary__line-item"]',
+      '[class*="cart-item"]',
+      '[class*="checkout-product"]',
+      // Generic product row selectors
+      'tr[class*="product"]',
+      'li[class*="product"]',
+      'li[class*="item"]',
+      '.product',
+    ];
+
+    for (const sel of rowSelectors) {
+      const rows = document.querySelectorAll(sel);
+      if (rows.length === 0) continue;
       let count = 0;
-      for (const el of allEls) {
-        if (el.childElementCount > 0) continue;
-        const t = (el.innerText || el.textContent || '').trim();
-        if (/shipping protection by route/i.test(t)) count++;
+      for (const row of rows) {
+        if (/shipping protection by route/i.test(row.innerText || row.textContent || '')) count++;
       }
-      return count > 0 ? count : 1; // at minimum 1 if full-text matched
+      if (count > 0) return count; // found via product rows — most accurate
     }
-    // Broader fallback
-    if (/route.*protection|route.*shipping|route.*package/i.test(fullText)) return 1;
-    return 0;
+
+    // Fallback: Route text is present but no product row containers matched.
+    // Return 1 — presence is confirmed, exact count can't be determined.
+    return 1;
   });
 
   async function getRouteCountAtCheckout() {
@@ -1460,12 +1489,12 @@ async function runQA(RATES) {
         try { await inp.focus({ timeout: 3000 }); } catch (_) {}
         await page.keyboard.press('Control+a').catch(() => {});
         await inp.fill(String(targetQty), { timeout: 5000 }).catch(async () => {
-          // Fallback: set value directly via JS and fire change events
-          await page.evaluate((el, v) => {
+          // Fallback: set value via JS — wrap args in object (Playwright only allows 1 arg)
+          await page.evaluate(({ el, v }) => {
             el.value = v;
             el.dispatchEvent(new Event('input',  { bubbles: true }));
             el.dispatchEvent(new Event('change', { bubbles: true }));
-          }, inp, String(targetQty));
+          }, { el: inp, v: String(targetQty) });
         });
         await inp.press('Enter').catch(() => {});
         await page.waitForTimeout(2500);
