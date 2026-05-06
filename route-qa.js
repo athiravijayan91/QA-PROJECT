@@ -30,34 +30,7 @@ function sseEmit(event, data) {
 // - Chrome window showing localhost:3000  → RIGHT half  {960, 0, 1920, 1080}
 // - Any other Chrome window (Playwright)  → LEFT half   {0, 0, 960, 1080}
 // Uses URL-based detection so it works regardless of which window is "front".
-function positionWindowsSideBySide() {
-  if (process.platform !== 'darwin') return;
-  const { execSync } = require('child_process');
-  try {
-    execSync(`osascript << 'EOF'
--- Detect current screen size dynamically
-tell application "Finder"
-  set screenBounds to bounds of window of desktop
-  set sw to item 3 of screenBounds
-  set sh to item 4 of screenBounds
-end tell
-set half to sw / 2 as integer
-
-tell application "Google Chrome"
-  repeat with w in windows
-    try
-      set u to (URL of active tab of w) as string
-      if u contains "localhost:3000" then
-        set bounds of w to {half, 0, sw, sh}
-      else
-        set bounds of w to {0, 0, half, sh}
-      end if
-    end try
-  end repeat
-end tell
-EOF`);
-  } catch (_) {}
-}
+// Window positioning removed — Playwright opens naturally without disrupting your workspace
 
 function startLiveServer() {
   let _uiStartResolve = null;
@@ -472,7 +445,7 @@ async function runQA(RATES) {
     '--disable-features=IsolateOrigins,site-per-process',
   ];
   // Open Playwright on left half of screen, dashboard on right half
-  const windowArgs = [...launchArgs, '--window-size=960,1080', '--window-position=0,0'];
+  const windowArgs = [...launchArgs, '--start-maximized']; // open maximized in a new window, no repositioning
   try {
     browser = await chromium.launch({ channel: 'chrome', headless: HEADLESS, slowMo: HEADLESS ? 0 : 100, args: windowArgs });
     console.log('  🌐  Using real Chrome browser');
@@ -480,16 +453,10 @@ async function runQA(RATES) {
     browser = await chromium.launch({ headless: HEADLESS, slowMo: HEADLESS ? 0 : 100, args: windowArgs });
     console.log('  🌐  Using bundled Chromium');
   }
-  // Re-position both windows now that Playwright's browser is open.
-  // Run twice: once after 2s (window opens), once after 5s (window fully rendered).
-  if (!HEADLESS) {
-    await new Promise(r => setTimeout(r, 2000));
-    positionWindowsSideBySide();
-    setTimeout(() => positionWindowsSideBySide(), 4000); // second pass to catch slow openers
-  }
+  // Playwright opens in its own window naturally — no repositioning
 
   const context = await browser.newContext({
-    viewport: { width: 960, height: 1200 }, // left half of screen, tall enough to show widget area
+    viewport: { width: 1280, height: 900 }, // standard full viewport
     userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
     locale: 'en-US',
     timezoneId: 'America/New_York',
