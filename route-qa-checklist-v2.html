@@ -927,30 +927,51 @@ function showFinalReport(data) {
 let _frActiveFilter = 'all';
 function frFilter(status, clickedEl) {
   _frActiveFilter = status;
+
   // Toggle active style on clicked stat box
   document.querySelectorAll('.fr-stat').forEach(s => s.classList.remove('active-filter'));
   if (clickedEl) clickedEl.classList.add('active-filter');
 
-  // Show/hide rows based on filter
+  // The "Failed Checks" summary panel at the top only shows when viewing fails or all
+  const failsPanel = document.querySelector('.fr-fails');
+  if (failsPanel) failsPanel.style.display = (status === 'all' || status === 'fail') ? '' : 'none';
+
+  // Show/hide each result row — INFO rows hidden when any specific filter is active
   document.querySelectorAll('.fr-row').forEach(row => {
-    const cls = [...row.classList];
+    const cls = row.className || '';
     if (status === 'all') {
       row.style.display = '';
-    } else if (status === 'pass') {
-      row.style.display = cls.includes('pass') ? '' : 'none';
-    } else if (status === 'fail') {
-      row.style.display = cls.includes('fail') ? '' : 'none';
-    } else if (status === 'warn') {
-      row.style.display = cls.includes('warn') ? '' : 'none';
+    } else {
+      // Show row only if it matches the selected status; INFO rows are hidden in all filters
+      const isMatch = cls.includes(status);  // 'pass', 'fail', or 'warn'
+      row.style.display = isMatch ? '' : 'none';
     }
   });
 
-  // Show/hide entire sections if all their rows are hidden
+  // Hide entire section blocks if none of their rows are visible
   document.querySelectorAll('.fr-section').forEach(sec => {
-    const rows = sec.querySelectorAll('.fr-row');
-    const anyVisible = [...rows].some(r => r.style.display !== 'none');
-    sec.style.display = anyVisible || status === 'all' ? '' : 'none';
+    if (status === 'all') { sec.style.display = ''; return; }
+    const visibleRows = [...sec.querySelectorAll('.fr-row')].filter(r => r.style.display !== 'none');
+    sec.style.display = visibleRows.length > 0 ? '' : 'none';
   });
+
+  // Show a "no results" message if everything is filtered out
+  const report = document.getElementById('final-report');
+  const allHidden = report && [...report.querySelectorAll('.fr-section')].every(s => s.style.display === 'none');
+  let emptyMsg = document.getElementById('fr-empty-msg');
+  if (allHidden && status !== 'all') {
+    if (!emptyMsg) {
+      emptyMsg = document.createElement('div');
+      emptyMsg.id = 'fr-empty-msg';
+      emptyMsg.style.cssText = 'padding:24px;text-align:center;color:#636366;font-size:14px;background:#fafafa;border-radius:12px;margin-top:12px';
+      report.appendChild(emptyMsg);
+    }
+    const labels = { pass:'passed', fail:'failed', warn:'warnings' };
+    emptyMsg.textContent = `No ${labels[status] || status} results in this report.`;
+    emptyMsg.style.display = '';
+  } else if (emptyMsg) {
+    emptyMsg.style.display = 'none';
+  }
 }
 
 // ── Results Dashboard State ───────────────────────────────────────────────
