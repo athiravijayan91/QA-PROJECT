@@ -456,11 +456,10 @@ async function runQA(RATES) {
     '--disable-web-security',
     '--disable-features=IsolateOrigins,site-per-process',
   ];
-  // Launch browser on LEFT half of screen at full height — dashboard stays on right half
+  // Launch browser sized to left half — osascript will move it to the correct display after open
   const windowArgs = [
     ...launchArgs,
     `--window-size=${HALF_W},${SCREEN_H}`,
-    '--window-position=0,0',
   ];
   try {
     browser = await chromium.launch({ channel: 'chrome', headless: HEADLESS, slowMo: HEADLESS ? 0 : 100, args: windowArgs });
@@ -468,6 +467,36 @@ async function runQA(RATES) {
   } catch (_) {
     browser = await chromium.launch({ headless: HEADLESS, slowMo: HEADLESS ? 0 : 100, args: windowArgs });
     console.log('  🌐  Using bundled Chromium');
+  }
+
+  // Move the Playwright browser to LEFT half of the primary display via osascript
+  // (using --window-position causes it to open on the wrong monitor in multi-display setups)
+  if (process.platform === 'darwin' && !HEADLESS) {
+    setTimeout(() => {
+      try {
+        const script = [
+          `tell application "Google Chrome"`,
+          `  activate`,
+          `  delay 0.5`,
+          `  set bounds of front window to {0, 0, ${HALF_W}, ${SCREEN_H}}`,
+          `end tell`,
+        ].join('\n');
+        execSync(`osascript -e '${script.replace(/'/g, "'\\''")}'`);
+      } catch (_) {
+        try {
+          // Fallback: use System Events (works for Chromium too)
+          const script2 = [
+            `tell application "System Events"`,
+            `  tell (first process whose name contains "Chrome" or name contains "Chromium")`,
+            `    set position of front window to {0, 0}`,
+            `    set size of front window to {${HALF_W}, ${SCREEN_H}}`,
+            `  end tell`,
+            `end tell`,
+          ].join('\n');
+          execSync(`osascript -e '${script2.replace(/'/g, "'\\''")}'`);
+        } catch (_) {}
+      }
+    }, 2000);
   }
 
   const context = await browser.newContext({
