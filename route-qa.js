@@ -16,6 +16,15 @@ const { execSync } = require('child_process');
 let BASE_URL = process.argv[2] || '';
 let HEADLESS  = false;
 
+// ── Screen dimensions (detected once at startup) ───────────────────────────
+let SCREEN_W = 1440, SCREEN_H = 900;
+try {
+  const out = execSync("osascript -e 'tell application \"Finder\" to get bounds of window of desktop'", { timeout: 3000 }).toString().trim();
+  const parts = out.split(',').map(s => parseInt(s.trim()));
+  if (parts.length === 4) { SCREEN_W = parts[2]; SCREEN_H = parts[3]; }
+} catch (_) {}
+const HALF_W = Math.floor(SCREEN_W / 2);
+
 // ── Live Dashboard Server ──────────────────────────────────────────────────
 let _sseClients = [];
 let _liveServer = null;
@@ -101,13 +110,15 @@ function startLiveServer() {
     console.log('  📡  QA Checklist UI → http://localhost:3000');
     console.log('  ℹ️   Fill in the config form and click "Start QA Checklist" to begin\n');
     try {
-      const { execSync } = require('child_process');
-      // Open dashboard — use 'open' which opens in the current default browser
-      // without forcing a new window or moving existing windows around
       if (process.platform === 'darwin') {
         execSync(`open http://localhost:3000`);
-        // Only position windows when QA actually starts (after user fills the form)
-        // so we don't disrupt their current workspace on startup
+        // After a short delay, position the dashboard window on the RIGHT half
+        setTimeout(() => {
+          try {
+            const x = HALF_W, y = 0, w = SCREEN_W - HALF_W, h = SCREEN_H;
+            execSync(`osascript -e 'delay 1' -e 'tell application "System Events" to tell (first process whose frontmost is true) to set {position, size} of front window to {{${x}, ${y}}, {${w}, ${h}}}'`);
+          } catch (_) {}
+        }, 800);
       } else {
         const openCmd = process.platform === 'win32' ? 'start' : 'xdg-open';
         execSync(`${openCmd} http://localhost:3000`);
@@ -445,19 +456,10 @@ async function runQA(RATES) {
     '--disable-web-security',
     '--disable-features=IsolateOrigins,site-per-process',
   ];
-  // Detect screen size so we can put Playwright on left half at full height
-  let screenW = 1440, screenH = 900;
-  try {
-    const out = execSync("osascript -e 'tell application \"Finder\" to get bounds of window of desktop'", { timeout: 3000 }).toString().trim();
-    const parts = out.split(',').map(s => parseInt(s.trim()));
-    if (parts.length === 4) { screenW = parts[2]; screenH = parts[3]; }
-  } catch (_) {}
-  const halfW = Math.floor(screenW / 2);
-
   // Launch browser on LEFT half of screen at full height — dashboard stays on right half
   const windowArgs = [
     ...launchArgs,
-    `--window-size=${halfW},${screenH}`,
+    `--window-size=${HALF_W},${SCREEN_H}`,
     '--window-position=0,0',
   ];
   try {
@@ -469,7 +471,7 @@ async function runQA(RATES) {
   }
 
   const context = await browser.newContext({
-    viewport: { width: halfW, height: screenH }, // match left-half window size
+    viewport: { width: HALF_W, height: SCREEN_H }, // match left-half window size
     userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
     locale: 'en-US',
     timezoneId: 'America/New_York',
@@ -722,6 +724,9 @@ async function runQA(RATES) {
     return page.evaluate(() => {
       // Both hyphen, underscore, and BEM modifier variants (themes differ greatly)
       const drawerSelectors = [
+        // Native <dialog> element (elan beauté and many modern Shopify themes)
+        'dialog[open]',
+        'dialog[aria-label*="cart" i]', 'dialog[aria-labelledby]',
         // Shopify 2.0 custom elements (Dawn, Impulse, many modern themes)
         'cart-drawer', 'cart-notification',
         // Cart notification popup (e.g. MTS Dawn theme: id="cart-notification")
@@ -800,6 +805,8 @@ async function runQA(RATES) {
     }
     // Try within known drawer containers (both hyphen and underscore)
     const drawerContainerSels = [
+      // Native <dialog> element (elan beauté and many modern Shopify themes)
+      'dialog[open]', 'dialog[aria-label*="cart" i]', 'dialog[aria-labelledby]',
       // Shopify 2.0 custom element (Dawn, Impulse, many modern themes)
       'cart-drawer', 'cart-notification',
       // Cart notification popup (MTS Dawn theme style)
@@ -2160,7 +2167,7 @@ async function runQA(RATES) {
       } else {
         log('Design', 'Widget visible on mobile (375px)', 'WARN', 'Widget not found at mobile width');
       }
-      await page.setViewportSize({ width: halfW, height: screenH }); // restore to left-half size
+      await page.setViewportSize({ width: HALF_W, height: SCREEN_H }); // restore to left-half size
     }
 
   } catch (err) {
