@@ -722,12 +722,16 @@ async function runQA(RATES) {
     return page.evaluate(() => {
       // Both hyphen, underscore, and BEM modifier variants (themes differ greatly)
       const drawerSelectors = [
+        // Shopify 2.0 custom elements (Dawn, Impulse, many modern themes)
+        'cart-drawer', 'cart-notification',
         // Cart notification popup (e.g. MTS Dawn theme: id="cart-notification")
         '#cart-notification', '[id*="cart-notification"]', '[class*="cart-notification"]',
         '[aria-label*="added to your cart" i]', '[aria-label*="item added" i]',
         // Hyphen variants
         '.cart-drawer', '[class*="cart-drawer"]', '[id*="cart-drawer"]', '[id*="CartDrawer"]',
         '.cart_drawer', '[class*="cart_drawer"]', '[id*="cart_drawer"]',
+        // Aside/section patterns
+        'aside[id*="cart"]', 'aside[class*="cart"]', 'section[id*="cart"]',
         // Modal-based cart (e.g. Verillas uses class="modal--cart modal modal--right modal--dark")
         '[class*="modal--cart"]', '[class*="modal-cart"]',
         'div[role="dialog"][class*="cart"]',
@@ -796,6 +800,8 @@ async function runQA(RATES) {
     }
     // Try within known drawer containers (both hyphen and underscore)
     const drawerContainerSels = [
+      // Shopify 2.0 custom element (Dawn, Impulse, many modern themes)
+      'cart-drawer', 'cart-notification',
       // Cart notification popup (MTS Dawn theme style)
       '#cart-notification', '[id*="cart-notification"]', '[class*="cart-notification"]',
       '[aria-label*="added to your cart" i]',
@@ -803,6 +809,8 @@ async function runQA(RATES) {
       '[class*="modal--cart"]', '[class*="modal-cart"]',
       'div[role="dialog"][class*="cart"]',
       'div[role="dialog"][aria-labelledby*="cart"]',
+      // Aside/section patterns
+      'aside[id*="cart"]', 'aside[class*="cart"]', 'section[id*="cart"]',
       // Standard patterns
       '[class*="cart-drawer"]', '[class*="cart_drawer"]', '[id*="cart-drawer"]', '[id*="CartDrawer"]',
       '[class*="cart-aside"]',  '[class*="cart_aside"]',
