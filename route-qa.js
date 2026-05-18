@@ -10,6 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const readline = require('readline');
 const http = require('http');
+const { execSync } = require('child_process');
 
 // URL and headless are set via the interactive config prompt below
 let BASE_URL = process.argv[2] || '';
@@ -444,8 +445,21 @@ async function runQA(RATES) {
     '--disable-web-security',
     '--disable-features=IsolateOrigins,site-per-process',
   ];
-  // Open Playwright on left half of screen, dashboard on right half
-  const windowArgs = [...launchArgs, '--start-maximized']; // open maximized in a new window, no repositioning
+  // Detect screen size so we can put Playwright on left half at full height
+  let screenW = 1440, screenH = 900;
+  try {
+    const out = execSync("osascript -e 'tell application \"Finder\" to get bounds of window of desktop'", { timeout: 3000 }).toString().trim();
+    const parts = out.split(',').map(s => parseInt(s.trim()));
+    if (parts.length === 4) { screenW = parts[2]; screenH = parts[3]; }
+  } catch (_) {}
+  const halfW = Math.floor(screenW / 2);
+
+  // Launch browser on LEFT half of screen at full height — dashboard stays on right half
+  const windowArgs = [
+    ...launchArgs,
+    `--window-size=${halfW},${screenH}`,
+    '--window-position=0,0',
+  ];
   try {
     browser = await chromium.launch({ channel: 'chrome', headless: HEADLESS, slowMo: HEADLESS ? 0 : 100, args: windowArgs });
     console.log('  🌐  Using real Chrome browser');
@@ -453,10 +467,9 @@ async function runQA(RATES) {
     browser = await chromium.launch({ headless: HEADLESS, slowMo: HEADLESS ? 0 : 100, args: windowArgs });
     console.log('  🌐  Using bundled Chromium');
   }
-  // Playwright opens in its own window naturally — no repositioning
 
   const context = await browser.newContext({
-    viewport: null, // use actual window size — fills full screen height when maximized
+    viewport: { width: halfW, height: screenH }, // match left-half window size
     userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
     locale: 'en-US',
     timezoneId: 'America/New_York',
@@ -475,14 +488,6 @@ async function runQA(RATES) {
   const routeNetworkCalls = [];
 
   const page = await context.newPage();
-
-  // Capture real screen dimensions so we can restore after mobile viewport check
-  let desktopW = 1440, desktopH = 900;
-  try {
-    await page.goto('about:blank');
-    const dims = await page.evaluate(() => ({ w: screen.availWidth, h: screen.availHeight }));
-    desktopW = dims.w; desktopH = dims.h;
-  } catch (_) {}
 
   // ── Screenshot helper ─────────────────────────────────────────────────────
   // Scrolls the Route widget into view before screenshotting so it's always visible.
@@ -2147,7 +2152,7 @@ async function runQA(RATES) {
       } else {
         log('Design', 'Widget visible on mobile (375px)', 'WARN', 'Widget not found at mobile width');
       }
-      await page.setViewportSize({ width: desktopW, height: desktopH }); // restore to full screen size
+      await page.setViewportSize({ width: halfW, height: screenH }); // restore to left-half size
     }
 
   } catch (err) {
