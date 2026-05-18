@@ -456,7 +456,7 @@ async function runQA(RATES) {
   // Playwright opens in its own window naturally — no repositioning
 
   const context = await browser.newContext({
-    viewport: { width: 1280, height: 900 }, // standard full viewport
+    viewport: null, // use actual window size — fills full screen height when maximized
     userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
     locale: 'en-US',
     timezoneId: 'America/New_York',
@@ -475,6 +475,14 @@ async function runQA(RATES) {
   const routeNetworkCalls = [];
 
   const page = await context.newPage();
+
+  // Capture real screen dimensions so we can restore after mobile viewport check
+  let desktopW = 1440, desktopH = 900;
+  try {
+    await page.goto('about:blank');
+    const dims = await page.evaluate(() => ({ w: screen.availWidth, h: screen.availHeight }));
+    desktopW = dims.w; desktopH = dims.h;
+  } catch (_) {}
 
   // ── Screenshot helper ─────────────────────────────────────────────────────
   // Scrolls the Route widget into view before screenshotting so it's always visible.
@@ -2139,7 +2147,7 @@ async function runQA(RATES) {
       } else {
         log('Design', 'Widget visible on mobile (375px)', 'WARN', 'Widget not found at mobile width');
       }
-      await page.setViewportSize({ width: 1440, height: 900 }); // restore to desktop size
+      await page.setViewportSize({ width: desktopW, height: desktopH }); // restore to full screen size
     }
 
   } catch (err) {
